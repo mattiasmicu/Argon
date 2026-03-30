@@ -1,0 +1,5 @@
+
+> tauri-app@0.1.0 tauri
+> tauri dev
+
+       Error `"tauri.conf.json"` error: Additional properties are not allowed ('deepLinkProtocols' was unexpected)
