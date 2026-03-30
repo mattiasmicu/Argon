@@ -1,9 +1,10 @@
 use tauri::{command, AppHandle, Emitter, Manager};
-use serde::{Deserialize, Serialize};
+use serde::{Serialize};
 use std::process::{Command, Stdio};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::fs;
+use zip::ZipArchive;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct LaunchLog {
@@ -29,8 +30,16 @@ pub async fn launch_instance(
     let instance: serde_json::Value = serde_json::from_str(&instance_json).map_err(|e| e.to_string())?;
     let version_id = instance["version"].as_str().ok_or("No version in instance.json")?;
 
+    // Check if there's a loader version ID (for modded instances)
+    let effective_version_id = if let Some(loader_version_id) = instance.get("loader_version_id").and_then(|v| v.as_str()) {
+        emit_log(&app, "info", format!("Using mod loader version: {}", loader_version_id));
+        loader_version_id
+    } else {
+        version_id
+    };
+
     // Read version info to get libraries
-    let version_json_path = app_data.join("versions").join(version_id).join(format!("{}.json", version_id));
+    let version_json_path = app_data.join("versions").join(effective_version_id).join(format!("{}.json", effective_version_id));
     if !version_json_path.exists() {
         return Err("Version JSON missing. Please download version first.".to_string());
     }
@@ -42,10 +51,40 @@ pub async fn launch_instance(
     let libs_dir = app_data.join("libraries");
     if let Some(libraries) = version_info["libraries"].as_array() {
         for lib in libraries {
+            // Add main artifact
             if let Some(name) = lib["name"].as_str() {
                 let lib_path = libs_dir.join(get_lib_path(name));
                 if lib_path.exists() {
                     classpath.push(lib_path.to_string_lossy().to_string());
+                }
+            }
+            
+            // Add classifier JARs (natives) to classpath
+            if let Some(downloads) = lib.get("downloads") {
+                if let Some(classifiers) = downloads.get("classifiers") {
+                    if let Some(classifiers_obj) = classifiers.as_object() {
+                        for (classifier_name, classifier_info) in classifiers_obj {
+                            // Only add natives for current OS
+                            let should_include = if cfg!(target_os = "macos") {
+                                classifier_name.contains("macos") || classifier_name.contains("osx")
+                            } else if cfg!(target_os = "windows") {
+                                classifier_name.contains("windows")
+                            } else if cfg!(target_os = "linux") {
+                                classifier_name.contains("linux")
+                            } else {
+                                false
+                            };
+                            
+                            if should_include {
+                                if let Some(path) = classifier_info.get("path").and_then(|p| p.as_str()) {
+                                    let classifier_path = libs_dir.join(path);
+                                    if classifier_path.exists() {
+                                        classpath.push(classifier_path.to_string_lossy().to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -56,11 +95,100 @@ pub async fn launch_instance(
     let classpath_sep = if cfg!(target_os = "windows") { ";" } else { ":" };
     let full_classpath = classpath.join(classpath_sep);
 
+    // Extract native libraries
+    let natives_path = libs_dir.join("natives");
+    fs::create_dir_all(&natives_path).map_err(|e| e.to_string())?;
+    
+    let mut natives_extracted = 0;
+    let mut libraries_with_natives = 0;
+    
+    if let Some(libraries) = version_info["libraries"].as_array() {
+        for lib in libraries {
+            libraries_with_natives += 1;
+            
+            // Debug: Print library structure
+            if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
+                if name.contains("lwjgl") || name.contains("glfw") {
+                    emit_log(&app, "debug", format!("Checking library: {}", name));
+                    emit_log(&app, "debug", format!("Has downloads: {}", lib.get("downloads").is_some()));
+                    
+                    // LWJGL libraries have natives embedded in main JAR, not separate classifier JARs
+                    if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
+                        if let Some(artifact_path) = artifact.get("path").and_then(|p| p.as_str()) {
+                            let artifact_jar_path = libs_dir.join(artifact_path);
+                            emit_log(&app, "debug", format!("Main artifact JAR path: {}", artifact_jar_path.to_string_lossy()));
+                            emit_log(&app, "debug", format!("Main artifact JAR exists: {}", artifact_jar_path.exists()));
+                            
+                            if artifact_jar_path.exists() {
+                                match extract_native_libraries(&artifact_jar_path, &natives_path) {
+                                    Ok(_) => {
+                                        natives_extracted += 1;
+                                        if natives_extracted <= 5 {
+                                            emit_log(&app, "info", format!("Extracted {} native libraries so far...", natives_extracted));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        emit_log(&app, "error", format!("Failed to extract {}: {}", artifact_jar_path.to_string_lossy(), e));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Also check for separate native classifier JARs (for other libraries)
+                    if let Some(downloads) = lib.get("downloads") {
+                        if let Some(classifiers) = downloads.get("classifiers") {
+                            emit_log(&app, "debug", "Has classifiers".to_string());
+                            if let Some(classifiers_obj) = classifiers.as_object() {
+                                for (key, value) in classifiers_obj {
+                                    emit_log(&app, "debug", format!("  Classifier: {}", key));
+                                    if key.contains("natives") {
+                                        if let Some(path) = value.get("path").and_then(|p| p.as_str()) {
+                                            let classifier_jar_path = libs_dir.join(path);
+                                            emit_log(&app, "debug", format!("Classifier JAR path: {}", classifier_jar_path.to_string_lossy()));
+                                            emit_log(&app, "debug", format!("Classifier JAR exists: {}", classifier_jar_path.exists()));
+                                            
+                                            if classifier_jar_path.exists() {
+                                                match extract_native_libraries(&classifier_jar_path, &natives_path) {
+                                                    Ok(_) => {
+                                                        natives_extracted += 1;
+                                                        if natives_extracted <= 5 {
+                                                            emit_log(&app, "info", format!("Extracted {} native libraries so far...", natives_extracted));
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        emit_log(&app, "error", format!("Failed to extract {}: {}", classifier_jar_path.to_string_lossy(), e));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    emit_log(&app, "info", format!("Processed {} libraries, extracted {} native libraries", libraries_with_natives, natives_extracted));
+
     // Build Arguments
     let mut args = Vec::new();
+    
+    // macOS requires -XstartOnFirstThread for GLFW
+    if cfg!(target_os = "macos") {
+        args.push("-XstartOnFirstThread".to_string());
+    }
+    
     args.push(format!("-Xmx{}m", ram_mb));
     args.push("-Xms512m".to_string());
-    args.push("-Djava.library.path=natives".to_string());
+    
+    // Set native library path to the libraries directory
+    let natives_path = libs_dir.join("natives");
+    args.push(format!("-Djava.library.path={}", natives_path.to_string_lossy()));
+    
     args.push("-Dlog4j2.formatMsgNoLookups=true".to_string());
     args.push("-cp".to_string());
     args.push(full_classpath);
@@ -130,10 +258,50 @@ pub async fn kill_instance(_id: String) -> Result<(), String> {
     Ok(())
 }
 
+fn emit_log(app: &AppHandle, level: &str, message: String) {
+    let _ = app.emit("launch-log", LaunchLog {
+        line: message,
+        level: level.to_string(),
+    });
+}
+
 fn get_lib_path(name: &str) -> PathBuf {
-    let parts: Vec<&str> = name.split(':').collect();
-    let group = parts[0].replace('.', "/");
-    let artifact = parts[1];
-    let version = parts[2];
-    PathBuf::from(group).join(artifact).join(version).join(format!("{}-{}.jar", artifact, version))
+    // Check if name already includes path components (like org.lwjgl:lwjgl-glfw:3.4.1)
+    if name.contains('/') {
+        // Name already includes full path, use as-is
+        PathBuf::from(name)
+    } else {
+        // Split by ':' for Maven coordinates (group:artifact:version[:classifier])
+        let parts: Vec<&str> = name.split(':').collect();
+        if parts.len() >= 3 {
+            let group = parts[0].replace('.', "/");
+            let artifact = parts[1];
+            let version = parts[2];
+            let filename = if parts.len() >= 4 {
+                // Has classifier (e.g., natives-macos-arm64)
+                format!("{}-{}-{}.jar", artifact, version, parts[3])
+            } else {
+                format!("{}-{}.jar", artifact, version)
+            };
+            PathBuf::from(group).join(artifact).join(version).join(filename)
+        } else {
+            PathBuf::from(name)
+        }
+    }
+}
+
+fn extract_native_libraries(jar_path: &Path, natives_dir: &Path) -> Result<(), String> {
+    let file = fs::File::open(jar_path).map_err(|e| e.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
+    
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+        if file.name().ends_with(".dylib") || file.name().ends_with(".so") || file.name().ends_with(".dll") {
+            let file_path = natives_dir.join(Path::new(file.name()).file_name().unwrap());
+            let mut output = fs::File::create(&file_path).map_err(|e| e.to_string())?;
+            std::io::copy(&mut file, &mut output).map_err(|e| e.to_string())?;
+        }
+    }
+    
+    Ok(())
 }

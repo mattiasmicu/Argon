@@ -54,3 +54,32 @@ body {
 .scroll-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* Disable all hover outline animations */
+* {
+  outline: none !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
+*:focus {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+*:hover {
+  outline: none !important;
+}
+
+/* Disable transition animations on interactive elements */
+button, a, input, select, textarea, [role="button"] {
+  transition: opacity 0.15s ease !important;
+}
+
+/* Remove ring/focus styles from Tailwind */
+.ring-0, .focus\:ring-0, .focus\:ring-1, .focus\:ring-2, .focus\:ring-4 {
+  --tw-ring-shadow: 0 0 #000 !important;
+}
+
+.focus\:outline-none:focus {
+  outline: none !important;
+}

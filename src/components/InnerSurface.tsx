@@ -2,17 +2,52 @@ import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useLauncherStore } from '../store/useLauncherStore';
 import { HomePanel } from '../panels/HomePanel';
-import { InstancesPanel } from '../panels/InstancesPanel';
+import { DiscoverPanel } from '../panels/DiscoverPanel';
 import { InstanceDetailPanel } from '../panels/InstanceDetailPanel';
 import { ModsPanel } from '../panels/ModsPanel';
 import { SkinsPanel } from '../panels/SkinsPanel';
 import { SettingsPanel } from '../panels/SettingsPanel';
 import { SetupWizard } from '../panels/SetupWizard';
 
+// Simple Library component showing all instances
+const LibraryPanel: React.FC = () => {
+  const { instances, pushPanel } = useLauncherStore();
+  return (
+    <div className="p-6">
+      <h1 className="text-2xl font-bold text-text-p mb-6">Library</h1>
+      <div className="grid grid-cols-3 gap-4">
+        {instances.map(instance => (
+          <button
+            key={instance.id}
+            onClick={() => pushPanel('instanceDetail', { id: instance.id })}
+            className="p-4 bg-inner2 border border-border rounded-xl hover:border-text-s transition-colors text-left"
+          >
+            <div className="w-12 h-12 bg-inner3 rounded-lg flex items-center justify-center text-2xl mb-3">
+              {instance.icon ? (
+                instance.icon.startsWith('data:') ? (
+                  <img src={instance.icon} alt="" className="w-full h-full object-cover rounded-lg" />
+                ) : (
+                  <span>{instance.icon}</span>
+                )
+              ) : (
+                <span>{instance.name.charAt(0).toUpperCase()}</span>
+              )}
+            </div>
+            <p className="font-bold text-text-p">{instance.name}</p>
+            <p className="text-xs text-text-s">{instance.version} · {instance.loader}</p>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const panels: Record<string, React.FC<any>> = {
   home: HomePanel,
-  instances: InstancesPanel,
+  discover: DiscoverPanel,
+  instances: InstanceDetailPanel,
   instanceDetail: InstanceDetailPanel,
+  library: LibraryPanel,
   mods: ModsPanel,
   skins: SkinsPanel,
   settings: SettingsPanel,

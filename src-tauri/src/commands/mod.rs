@@ -4,3 +4,5 @@ pub mod instances;
 pub mod download;
 pub mod launch;
 pub mod settings;
+pub mod files;
+pub mod loaders;

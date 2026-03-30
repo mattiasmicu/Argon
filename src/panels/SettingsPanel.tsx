@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLauncherStore } from '../store/useLauncherStore';
-import { Cpu, FileCode, User, HardDrive, LogOut } from 'lucide-react';
+import { Cpu, FileCode, User, LogOut } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 
 export const SettingsPanel: React.FC = () => {
