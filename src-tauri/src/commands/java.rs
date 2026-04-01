@@ -8,6 +8,12 @@ use tar::Archive;
 use flate2::read::GzDecoder;
 use zip::ZipArchive;
 
+#[derive(Debug, Serialize)]
+struct PlatformInfo {
+    os: String,
+    arch: String,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct LaunchLog {
     pub line: String,
@@ -19,6 +25,20 @@ fn emit_log(app: &AppHandle, level: &str, message: String) {
         line: message,
         level: level.to_string(),
     });
+}
+
+#[command]
+pub async fn get_platform_info() -> Result<PlatformInfo, String> {
+    let os = if cfg!(target_os = "windows") { "windows".to_string() }
+        else if cfg!(target_os = "macos") { "macos".to_string() }
+        else if cfg!(target_os = "linux") { "linux".to_string() }
+        else { "unknown".to_string() };
+    
+    let arch = if cfg!(target_arch = "x86_64") { "x86_64".to_string() }
+        else if cfg!(target_arch = "aarch64") { "aarch64".to_string() }
+        else { "unknown".to_string() };
+    
+    Ok(PlatformInfo { os, arch })
 }
 
 #[command]

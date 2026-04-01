@@ -12,6 +12,7 @@ pub fn run() {
             commands::auth::try_official_launcher_auth,
             commands::java::download_java,
             commands::java::detect_java_version,
+            commands::java::get_platform_info,
             commands::java::get_os,
             commands::java::get_arch,
             commands::instances::list_instances,
