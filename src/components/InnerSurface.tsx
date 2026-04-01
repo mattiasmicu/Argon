@@ -65,6 +65,19 @@ const panels: Record<string, React.FC<any>> = {
 export const InnerSurface: React.FC = () => {
   const { panelStack, auth } = useLauncherStore();
   const currentPanel = panelStack[panelStack.length - 1];
+  
+  // Determine animation direction based on navigation source
+  const isTopbarNavigation = currentPanel?.source === 'topbar';
+  
+  // Topbar navigation: horizontal slide (side-to-side)
+  // Sidebar navigation: vertical slide (up-to-down)
+  const initialProps = isTopbarNavigation 
+    ? { x: '100%', opacity: 0 }
+    : { y: '100%', opacity: 0 };
+  
+  const exitProps = isTopbarNavigation
+    ? { x: '100%', opacity: 0 }
+    : { y: '100%', opacity: 0 };
 
   return (
     <div className="bg-inner rounded-tl-inner rounded-bl-inner overflow-hidden relative border-l border-t border-border/20">
@@ -72,9 +85,9 @@ export const InnerSurface: React.FC = () => {
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.div
           key={currentPanel.id + (currentPanel.props?.id || '')}
-          initial={{ x: '100%', opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          exit={{ x: '100%', opacity: 0 }}
+          initial={initialProps}
+          animate={{ x: 0, y: 0, opacity: 1 }}
+          exit={exitProps}
           transition={{ duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
           className="absolute inset-0 overflow-hidden"
         >

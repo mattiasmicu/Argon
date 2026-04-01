@@ -4,6 +4,7 @@ import { persist } from 'zustand/middleware';
 export interface PanelEntry {
   id: string;
   props?: any;
+  source?: 'sidebar' | 'topbar';
 }
 
 export interface UserProfile {
@@ -50,7 +51,7 @@ interface LauncherStore {
   // Navigation
   panelStack: PanelEntry[];
   forwardStack: PanelEntry[];
-  pushPanel: (id: string, props?: any) => void;
+  pushPanel: (id: string, props?: any, source?: 'sidebar' | 'topbar') => void;
   popPanel: () => void;
   forwardPanel: () => void;
 
@@ -95,8 +96,8 @@ export const useLauncherStore = create<LauncherStore>()(
       // Navigation
       panelStack: [{ id: 'home' }],
       forwardStack: [],
-      pushPanel: (id, props) => set((state) => ({
-        panelStack: [...state.panelStack, { id, props }],
+      pushPanel: (id, props, source = 'sidebar') => set((state) => ({
+        panelStack: [...state.panelStack, { id, props, source }],
         forwardStack: [],
       })),
       popPanel: () => set((state) => {
