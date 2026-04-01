@@ -9,7 +9,7 @@ use flate2::read::GzDecoder;
 use zip::ZipArchive;
 
 #[derive(Debug, Serialize)]
-struct PlatformInfo {
+pub struct PlatformInfo {
     os: String,
     arch: String,
 }

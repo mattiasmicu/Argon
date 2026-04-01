@@ -30,12 +30,12 @@ pub async fn launch_instance(
     let instance: serde_json::Value = serde_json::from_str(&instance_json).map_err(|e| e.to_string())?;
     let version_id = instance["version"].as_str().ok_or("No version in instance.json")?;
 
-    // Check if there's a loader version ID (for modded instances)
-    let effective_version_id = if let Some(loader_version_id) = instance.get("loader_version_id").and_then(|v| v.as_str()) {
+    // Check if there's a loader version ID (for modded instances) - only used for logging
+    let _loader_version = if let Some(loader_version_id) = instance.get("loader_version_id").and_then(|v| v.as_str()) {
         emit_log(&app, "info", format!("Using mod loader version: {}", loader_version_id));
-        loader_version_id
+        Some(loader_version_id)
     } else {
-        version_id
+        None
     };
 
     // Read version info to get libraries - use MINECRAFT version for libraries, not loader version
