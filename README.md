@@ -10,7 +10,7 @@
 
 Spring is a fast, lightweight Minecraft launcher built with [Tauri](https://tauri.app/) (Rust + React). It features a modern UI, seamless Microsoft authentication, and easy instance management.
 
-![Spring Launcher](public/Spring-orange.png)
+![Spring Launcher](public/Trysomethingnew.png)
 
 ## Features
 
