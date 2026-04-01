@@ -11,6 +11,7 @@ export const AddAccountPanel: React.FC = () => {
 
   const [authStatus, setAuthStatus] = useState<'idle' | 'authenticating' | 'error'>('idle');
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [authWindowClosed, setAuthWindowClosed] = useState(false);
 
   const [showOffline, setShowOffline] = useState(false);
   const [offlineUsername, setOfflineUsername] = useState('');
@@ -26,9 +27,14 @@ export const AddAccountPanel: React.FC = () => {
       setAuthStatus('error');
     });
 
+    const unlistenWindowClosed = listen('auth-window-closed', () => {
+      setAuthWindowClosed(true);
+    });
+
     return () => {
       unlistenSuccess.then(f => f());
       unlistenError.then(f => f());
+      unlistenWindowClosed.then(f => f());
     };
   }, []);
 
@@ -36,6 +42,7 @@ export const AddAccountPanel: React.FC = () => {
     setLoginError(null);
     setAuthStatus('authenticating');
     setShowOffline(false);
+    setAuthWindowClosed(false);
 
     try {
       // Start OAuth flow - opens browser and starts local redirect server
@@ -63,6 +70,7 @@ export const AddAccountPanel: React.FC = () => {
   const handleCancel = () => {
     setAuthStatus('idle');
     setLoginError(null);
+    setAuthWindowClosed(false);
     invoke('cancel_microsoft_auth').catch(() => {});
     popPanel();
   };
@@ -137,13 +145,27 @@ export const AddAccountPanel: React.FC = () => {
         ) : authStatus === 'authenticating' ? (
           <div className="text-center py-8 space-y-4">
             <div className="flex justify-center">
-              <Loader size={64} color="orange" />
+              <Loader size={80} color="orange" />
             </div>
             <p className="text-text-s text-sm">Signing in with Microsoft...</p>
-            <p className="text-text-d text-xs">Complete the sign-in in the popup window.</p>
-            <button onClick={handleCancel} className="text-text-s text-xs hover:text-text-p transition-colors">
-              Cancel
-            </button>
+            {authWindowClosed ? (
+              <div className="space-y-3">
+                <p className="text-text-d text-xs">Login window was closed</p>
+                <Button onClick={handleLogin} variant="outline" className="w-full">
+                  Reopen Login Window
+                </Button>
+                <button onClick={handleCancel} className="text-text-s text-xs hover:text-text-p transition-colors">
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <>
+                <p className="text-text-d text-xs">Complete the sign-in in the popup window</p>
+                <button onClick={handleCancel} className="text-text-s text-xs hover:text-text-p transition-colors">
+                  Cancel
+                </button>
+              </>
+            )}
           </div>
         ) : null}
       </div>

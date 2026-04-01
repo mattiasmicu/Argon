@@ -63,7 +63,7 @@ pub struct UserProfile {
 struct PendingAuthorization {
     url: Url,
     csrf_token: CsrfToken,
-    pkce_verifier: Option<PkceCodeVerifier>,
+    pkce_verifier: Arc<Mutex<Option<PkceCodeVerifier>>>,
 }
 
 impl std::fmt::Debug for PendingAuthorization {
@@ -71,7 +71,7 @@ impl std::fmt::Debug for PendingAuthorization {
         f.debug_struct("PendingAuthorization")
             .field("url", &self.url)
             .field("csrf_token", &self.csrf_token)
-            .field("pkce_verifier", &self.pkce_verifier.as_ref().map(|_| "<verifier>"))
+            .field("pkce_verifier", &"<verifier>")
             .finish()
     }
 }
@@ -81,7 +81,7 @@ impl Clone for PendingAuthorization {
         Self {
             url: self.url.clone(),
             csrf_token: self.csrf_token.clone(),
-            pkce_verifier: None, // PKCE verifier cannot be cloned and is consumed on use
+            pkce_verifier: Arc::clone(&self.pkce_verifier),
         }
     }
 }
@@ -219,10 +219,10 @@ pub async fn start_microsoft_auth(app: tauri::AppHandle) -> Result<(), String> {
     guard.pending = Some(pending);
     drop(guard);
     
-    // Create a webview window for authentication with URL bar
+    // Create a webview window for authentication with title bar
     let auth_window = WebviewWindowBuilder::new(&app, "auth", WebviewUrl::External(auth_url.parse().unwrap()))
-        .title("Sign in with Microsoft")
-        .inner_size(500.0, 650.0)
+        .title("Microsoft Login")
+        .inner_size(500.0, 600.0)
         .center()
         .resizable(true)
         .build()
@@ -230,13 +230,30 @@ pub async fn start_microsoft_auth(app: tauri::AppHandle) -> Result<(), String> {
     
     // Start local server in background to handle redirect
     let app_handle = app.clone();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let shutdown_tx = Arc::new(Mutex::new(Some(shutdown_tx)));
     
-    // Store shutdown channel
-    let state = get_server_state();
-    let mut guard = state.lock().await;
-    guard.shutdown = Some(shutdown_tx);
-    drop(guard);
+    // Clone for window close detection
+    let app_handle_for_close = app.clone();
+    let shutdown_tx_for_close = shutdown_tx.clone();
+    
+    // Spawn a task to detect when user closes the window
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            // Check if window still exists
+            if app_handle_for_close.get_webview_window("auth").is_none() {
+                // Window was closed by user
+                println!("[auth] Auth window was closed by user");
+                let _ = app_handle_for_close.emit("auth-window-closed", ());
+                // Signal server to shutdown
+                if let Some(tx) = shutdown_tx_for_close.lock().await.take() {
+                    let _ = tx.send(());
+                }
+                break;
+            }
+        }
+    });
     
     tauri::async_runtime::spawn(async move {
         match start_redirect_server(shutdown_rx).await {
@@ -267,6 +284,9 @@ pub async fn start_microsoft_auth(app: tauri::AppHandle) -> Result<(), String> {
                 let _ = app_handle.emit("auth-error", format!("Auth server error: {}", e));
             }
         }
+        
+        // Also emit window-closed event so UI can show reopen button
+        let _ = app_handle.emit("auth-window-closed", ());
         
         // Clear pending auth
         let state = get_server_state();
@@ -637,7 +657,7 @@ fn create_authorization() -> PendingAuthorization {
     PendingAuthorization {
         url,
         csrf_token,
-        pkce_verifier: Some(pkce_verifier),
+        pkce_verifier: Arc::new(Mutex::new(Some(pkce_verifier))),
     }
 }
 
@@ -657,7 +677,7 @@ async fn finish_authorization(finished: FinishedAuthorization) -> Result<MsaToke
     
     let token_response = oauth_client
         .exchange_code(AuthorizationCode::new(finished.code))
-        .set_pkce_verifier(finished.pending.pkce_verifier.ok_or("Missing PKCE verifier")?)
+        .set_pkce_verifier(finished.pending.pkce_verifier.lock().await.take().ok_or("Missing PKCE verifier")?)
         .request_async(&http_client)
         .await
         .map_err(|e| format!("Token exchange failed: {:?}", e))?;

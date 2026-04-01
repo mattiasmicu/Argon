@@ -17,6 +17,7 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
 
   const [authStatus, setAuthStatus] = useState<'idle' | 'authenticating' | 'error'>('idle');
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [authWindowClosed, setAuthWindowClosed] = useState(false);
 
   const [showOffline, setShowOffline] = useState(false);
   const [offlineUsername, setOfflineUsername] = useState('');
@@ -47,11 +48,17 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
       setAuthStatus('error');
     });
 
+    // Auth window closed
+    const unlistenWindowClosed = listen('auth-window-closed', () => {
+      setAuthWindowClosed(true);
+    });
+
     return () => {
       unlistenProgress.then(f => f());
       unlistenStatus.then(f => f());
       unlistenSuccess.then(f => f());
       unlistenError.then(f => f());
+      unlistenWindowClosed.then(f => f());
     };
   }, []);
 
@@ -59,6 +66,7 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
     setLoginError(null);
     setAuthStatus('authenticating');
     setShowOffline(false);
+    setAuthWindowClosed(false);
 
     try {
       // Start OAuth flow - opens browser and starts local redirect server
@@ -73,6 +81,7 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
   const handleCancelAuth = async () => {
     setAuthStatus('idle');
     setLoginError(null);
+    setAuthWindowClosed(false);
     await invoke('cancel_microsoft_auth').catch(() => {});
   };
 
@@ -159,11 +168,23 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
                   ) : authStatus === 'authenticating' ? (
                     <motion.div key="authing" className="text-center py-8 space-y-4">
                       <div className="flex justify-center">
-                        <Loader size={64} color="orange" />
+                        <Loader size={80} color="orange" />
                       </div>
                       <p className="text-text-s">Signing in with Microsoft...</p>
-                      <p className="text-text-d text-xs">Complete the sign-in in the popup window.</p>
-                      <button onClick={handleCancelAuth} className="text-text-s text-sm hover:text-text-p">Cancel</button>
+                      {authWindowClosed ? (
+                        <div className="space-y-3">
+                          <p className="text-text-d text-xs">Login window was closed</p>
+                          <Button onClick={handleLogin} variant="outline" className="w-full">
+                            Reopen Login Window
+                          </Button>
+                          <button onClick={handleCancelAuth} className="text-text-s text-sm hover:text-text-p">Cancel</button>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-text-d text-xs">Complete the sign-in in the popup window</p>
+                          <button onClick={handleCancelAuth} className="text-text-s text-sm hover:text-text-p">Cancel</button>
+                        </>
+                      )}
                     </motion.div>
                   ) : null}
                 </AnimatePresence>
@@ -251,11 +272,23 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
             ) : authStatus === 'authenticating' ? (
               <motion.div key="authing" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="text-center py-6 space-y-4">
                 <div className="flex justify-center">
-                  <Loader size={56} color="orange" />
+                  <Loader size={72} color="orange" />
                 </div>
                 <p className="text-text-s text-sm">Signing in with Microsoft...</p>
-                <p className="text-text-d text-xs">Complete the sign-in in the popup window.</p>
-                <button onClick={handleCancelAuth} className="text-text-s text-xs hover:text-text-p">Cancel</button>
+                {authWindowClosed ? (
+                  <div className="space-y-3">
+                    <p className="text-text-d text-xs">Login window was closed</p>
+                    <Button onClick={handleLogin} variant="outline" className="w-full text-sm">
+                      Reopen Login Window
+                    </Button>
+                    <button onClick={handleCancelAuth} className="text-text-s text-xs hover:text-text-p">Cancel</button>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-text-d text-xs">Complete the sign-in in the popup window</p>
+                    <button onClick={handleCancelAuth} className="text-text-s text-xs hover:text-text-p">Cancel</button>
+                  </>
+                )}
               </motion.div>
             ) : null}
           </AnimatePresence>
