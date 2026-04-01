@@ -137,7 +137,7 @@ export const AddAccountPanel: React.FC = () => {
         ) : authStatus === 'authenticating' ? (
           <div className="text-center py-8 space-y-4">
             <div className="flex justify-center">
-              <Loader size={48} color="orange" />
+              <Loader size={64} color="orange" />
             </div>
             <p className="text-text-s text-sm">Signing in with Microsoft...</p>
             <p className="text-text-d text-xs">Complete the sign-in in the popup window.</p>

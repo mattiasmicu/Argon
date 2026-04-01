@@ -4,7 +4,7 @@ use reqwest::Client;
 use tokio::time::Duration;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 use chrono::Utc;
 use oauth2::{
@@ -179,12 +179,19 @@ struct MCSkin {
     url: String,
 }
 
-// Global state for pending auth (to handle the redirect)
-use std::sync::OnceLock;
-static PENDING_AUTH: OnceLock<Arc<Mutex<Option<PendingAuthorization>>>> = OnceLock::new();
+// Global state for pending auth and server cancellation
+struct ServerState {
+    pending: Option<PendingAuthorization>,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+}
 
-fn get_pending_auth() -> Arc<Mutex<Option<PendingAuthorization>>> {
-    PENDING_AUTH.get_or_init(|| Arc::new(Mutex::new(None))).clone()
+static SERVER_STATE: OnceLock<Arc<Mutex<ServerState>>> = OnceLock::new();
+
+fn get_server_state() -> Arc<Mutex<ServerState>> {
+    SERVER_STATE.get_or_init(|| Arc::new(Mutex::new(ServerState {
+        pending: None,
+        shutdown: None,
+    }))).clone()
 }
 
 // ── Commands ───────────────────────────────────────────────────────────────────
@@ -196,25 +203,43 @@ pub async fn start_microsoft_auth(app: tauri::AppHandle) -> Result<(), String> {
     let pending = create_authorization();
     let auth_url = pending.url.to_string();
     
-    // Store pending auth for later verification
-    let pending_store = get_pending_auth();
-    let mut guard = pending_store.lock().await;
-    *guard = Some(pending);
+    // Stop any existing server first
+    let state = get_server_state();
+    let mut guard = state.lock().await;
+    if let Some(shutdown) = guard.shutdown.take() {
+        let _ = shutdown.send(());
+    }
+    // Small delay to let old server release the port
+    drop(guard);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    
+    // Store pending auth
+    let state = get_server_state();
+    let mut guard = state.lock().await;
+    guard.pending = Some(pending);
     drop(guard);
     
-    // Create a webview window for authentication
+    // Create a webview window for authentication with URL bar
     let auth_window = WebviewWindowBuilder::new(&app, "auth", WebviewUrl::External(auth_url.parse().unwrap()))
         .title("Sign in with Microsoft")
-        .inner_size(500.0, 600.0)
+        .inner_size(500.0, 650.0)
         .center()
-        .resizable(false)
+        .resizable(true)
         .build()
         .map_err(|e| format!("Failed to create auth window: {}", e))?;
     
     // Start local server in background to handle redirect
     let app_handle = app.clone();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    
+    // Store shutdown channel
+    let state = get_server_state();
+    let mut guard = state.lock().await;
+    guard.shutdown = Some(shutdown_tx);
+    drop(guard);
+    
     tauri::async_runtime::spawn(async move {
-        match start_redirect_server().await {
+        match start_redirect_server(shutdown_rx).await {
             Ok(finished) => {
                 // Close the auth window
                 let _ = auth_window.close();
@@ -244,9 +269,10 @@ pub async fn start_microsoft_auth(app: tauri::AppHandle) -> Result<(), String> {
         }
         
         // Clear pending auth
-        let pending_store = get_pending_auth();
-        let mut guard = pending_store.lock().await;
-        *guard = None;
+        let state = get_server_state();
+        let mut guard = state.lock().await;
+        guard.pending = None;
+        guard.shutdown = None;
     });
     
     Ok(())
@@ -255,9 +281,12 @@ pub async fn start_microsoft_auth(app: tauri::AppHandle) -> Result<(), String> {
 /// Cancel ongoing authentication
 #[command]
 pub async fn cancel_microsoft_auth() -> Result<(), String> {
-    let pending_store = get_pending_auth();
-    let mut guard = pending_store.lock().await;
-    *guard = None;
+    let state = get_server_state();
+    let mut guard = state.lock().await;
+    guard.pending = None;
+    if let Some(shutdown) = guard.shutdown.take() {
+        let _ = shutdown.send(());
+    }
     Ok(())
 }
 
@@ -643,7 +672,7 @@ async fn finish_authorization(finished: FinishedAuthorization) -> Result<MsaToke
     })
 }
 
-async fn start_redirect_server() -> Result<FinishedAuthorization, String> {
+async fn start_redirect_server(mut shutdown: tokio::sync::oneshot::Receiver<()>) -> Result<FinishedAuthorization, String> {
     println!("[auth] Starting redirect server on {}", SERVER_ADDRESS);
     
     let listener = TcpListener::bind(SERVER_ADDRESS)
@@ -655,10 +684,21 @@ async fn start_redirect_server() -> Result<FinishedAuthorization, String> {
     let mut buf = vec![0u8; 1024];
     
     loop {
-        println!("[auth] Waiting for connection...");
-        let (mut stream, addr) = listener.accept()
-            .await
-            .map_err(|e| format!("Failed to accept connection: {}", e))?;
+        // Check for shutdown signal
+        if let Ok(()) = shutdown.try_recv() {
+            println!("[auth] Server shutting down");
+            return Err("Authentication cancelled".to_string());
+        }
+        
+        // Set a timeout for accept
+        let accept_future = listener.accept();
+        let timeout = tokio::time::timeout(Duration::from_millis(100), accept_future);
+        
+        let (mut stream, addr) = match timeout.await {
+            Ok(Ok(result)) => result,
+            Ok(Err(e)) => return Err(format!("Failed to accept connection: {}", e)),
+            Err(_) => continue, // Timeout, check shutdown again
+        };
         
         println!("[auth] Got connection from {:?}", addr);
         
@@ -752,10 +792,10 @@ async fn start_redirect_server() -> Result<FinishedAuthorization, String> {
             }
             
             // Verify CSRF token
-            let pending_store = get_pending_auth();
-            let guard = pending_store.lock().await;
+            let server_state = get_server_state();
+            let guard = server_state.lock().await;
             
-            if let Some(ref pending) = *guard {
+            if let Some(ref pending) = guard.pending {
                 if let Some(ref received_state) = state {
                     if received_state != pending.csrf_token.secret() {
                         let body = r#"<!DOCTYPE html>
