@@ -166,7 +166,7 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
                   ) : authStatus === 'idle' || authStatus === 'error' ? (
                     <motion.div key="buttons" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-3">
                       {loginError && <p className="text-red-400 text-xs bg-red-400/10 rounded-xl p-3 text-center">{loginError}</p>}
-                      <Button onClick={handleLogin} variant="outline" className="w-full bg-white text-black hover:bg-white border-0">
+                      <Button onClick={handleLogin} variant="outline" className="w-full">
                         Sign in with Microsoft
                         <svg className="w-5 h-5 ml-2" viewBox="0 0 21 21">
                           <rect x="0" y="0" width="10" height="10" fill="#f25022"/>
@@ -283,7 +283,7 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
             ) : authStatus === 'idle' || authStatus === 'error' ? (
               <motion.div key="buttons" layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-3">
                 {loginError && <p className="text-red-400 text-xs bg-red-400/10 rounded-md p-3">{loginError}</p>}
-                <Button onClick={handleLogin} variant="outline" className="w-full bg-white text-black hover:bg-white border-0">
+                <Button onClick={handleLogin} variant="outline" className="w-full">
                   Sign in with Microsoft
                   <svg className="w-5 h-5 ml-2" viewBox="0 0 21 21">
                     <rect x="0" y="0" width="10" height="10" fill="#f25022"/>

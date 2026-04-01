@@ -39,7 +39,7 @@ pub async fn get_loader_versions(loader: String, mc_version: String) -> Result<V
     match loader.as_str() {
         "fabric" => get_fabric_versions(&mc_version).await,
         "quilt" => get_quilt_versions(&mc_version).await,
-        "forge" => get_forge_versions(&mc_version).await,
+        "forge" | "neoforge" => get_forge_versions(&mc_version).await,
         _ => Err(format!("Unsupported loader: {}", loader)),
     }
 }
@@ -119,7 +119,7 @@ pub async fn install_loader(
         "fabric" | "quilt" => {
             install_fabric_or_quilt(&app, &instance_dir, &loader, &mc_version, &loader_version).await
         }
-        "forge" => {
+        "forge" | "neoforge" => {
             install_forge(&app, &instance_dir, &mc_version, &loader_version).await
         }
         _ => Err(format!("Unsupported loader: {}", loader)),
