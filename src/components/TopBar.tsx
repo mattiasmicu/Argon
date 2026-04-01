@@ -78,7 +78,7 @@ export const TopBar: React.FC = () => {
         {/* Navigation buttons - left side */}
         <div className="flex items-center gap-1 ml-4">
           <motion.button 
-            onClick={() => pushPanel('discover')}
+            onClick={() => pushPanel('discover', undefined, 'topbar')}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             transition={{ type: 'spring', stiffness: 400, damping: 17 }}
@@ -88,7 +88,7 @@ export const TopBar: React.FC = () => {
           </motion.button>
           
           <motion.button 
-            onClick={() => pushPanel('library')}
+            onClick={() => pushPanel('library', undefined, 'topbar')}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             transition={{ type: 'spring', stiffness: 400, damping: 17 }}
@@ -98,7 +98,7 @@ export const TopBar: React.FC = () => {
           </motion.button>
           
           <motion.button 
-            onClick={() => pushPanel('skins')}
+            onClick={() => pushPanel('skins', undefined, 'topbar')}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             transition={{ type: 'spring', stiffness: 400, damping: 17 }}
