@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useLauncherStore } from '../store/useLauncherStore';
-import { Layers, Plus, Play, ChevronRight, X, Search, Loader2 } from 'lucide-react';
+import { Layers, Plus, Play, X, Search, Loader2, MoreVertical, FolderOpen, Download, Trash2, Copy, Settings } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { AnimatePresence, motion } from 'framer-motion';
+import { InstanceSettingsModal } from '../components/InstanceSettingsModal';
 
 interface VersionEntry {
   id: string;
@@ -13,6 +14,10 @@ interface VersionEntry {
 export const InstancesPanel: React.FC = () => {
   const { instances, setInstances, pushPanel } = useLauncherStore();
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; instanceId: string } | null>(null);
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
 
   // Dialog
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -34,6 +39,63 @@ export const InstancesPanel: React.FC = () => {
       setLoading(false);
     });
   }, []);
+
+  const handleDeleteInstance = async (instanceId: string) => {
+    setDeletingId(instanceId);
+    setContextMenu(null);
+    // Wait for animation
+    await new Promise(resolve => setTimeout(resolve, 300));
+    try {
+      await invoke('delete_instance', { id: instanceId });
+      const updated = await invoke<any[]>('list_instances');
+      setInstances(updated ?? []);
+    } catch (err) {
+      console.error('Failed to delete instance:', err);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleOpenFolder = async (instanceId: string) => {
+    try {
+      await invoke('open_instance_folder', { instanceId });
+    } catch (err) {
+      console.error('Failed to open folder:', err);
+    }
+    setContextMenu(null);
+  };
+
+  const handleExportModpack = async (instanceId: string) => {
+    try {
+      await invoke('export_modpack', { instanceId });
+    } catch (err) {
+      console.error('Failed to export modpack:', err);
+    }
+    setContextMenu(null);
+  };
+
+  const handleDuplicateInstance = async (instanceId: string) => {
+    try {
+      await invoke('duplicate_instance', { id: instanceId });
+      const updated = await invoke<any[]>('list_instances');
+      setInstances(updated ?? []);
+    } catch (err) {
+      console.error('Failed to duplicate instance:', err);
+    }
+    setContextMenu(null);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, instanceId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, instanceId });
+  };
+
+  const openSettings = (instanceId: string) => {
+    setSelectedInstanceId(instanceId);
+    setSettingsModalOpen(true);
+    setContextMenu(null);
+  };
 
   const openDialog = () => {
     setStep('name');
@@ -108,32 +170,48 @@ export const InstancesPanel: React.FC = () => {
 
       <div className="flex-1 overflow-y-auto pr-2 scroll-hide">
         <div className="flex flex-col gap-2">
-          {instances.map((instance) => (
-            <div
-              key={instance.id}
-              onClick={() => pushPanel('instanceDetail', { id: instance.id })}
-              className="flex items-center gap-4 p-3 bg-inner2 border border-border rounded-card hover:bg-inner3 transition-colors cursor-pointer group"
-            >
-              <div className="w-10 h-10 bg-inner3 rounded-md overflow-hidden flex-shrink-0 flex items-center justify-center text-text-d">
-                {instance.icon ? <img src={instance.icon} alt="" /> : <Layers size={20} />}
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-medium text-text-p truncate">{instance.name}</h3>
-                <p className="text-[10px] text-text-s truncate uppercase tracking-tighter font-bold">
-                  {instance.version} · {instance.loader}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={(e) => { e.stopPropagation(); pushPanel('instanceDetail', { id: instance.id }); }}
-                  className="w-8 h-8 bg-inner3 border border-border rounded-md flex items-center justify-center text-text-s hover:text-text-p transition-colors"
-                >
-                  <Play size={14} fill="currentColor" />
-                </button>
-                <ChevronRight size={18} className="text-text-d" />
-              </div>
-            </div>
-          ))}
+          <AnimatePresence mode="popLayout">
+            {instances.map((instance) => (
+              <motion.div
+                key={instance.id}
+                layout
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ 
+                  opacity: deletingId === instance.id ? 0 : 1, 
+                  x: deletingId === instance.id ? -100 : 0,
+                  scale: deletingId === instance.id ? 0.95 : 1
+                }}
+                exit={{ opacity: 0, x: -100, scale: 0.95 }}
+                transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
+                onClick={() => pushPanel('instanceDetail', { id: instance.id })}
+                className="flex items-center gap-4 p-3 bg-inner2 border border-border rounded-card hover:bg-inner3 transition-colors cursor-pointer group"
+              >
+                <div className="w-10 h-10 bg-inner3 rounded-md overflow-hidden flex-shrink-0 flex items-center justify-center text-text-d">
+                  {instance.icon ? <img src={instance.icon} alt="" /> : <Layers size={20} />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-medium text-text-p truncate">{instance.name}</h3>
+                  <p className="text-[10px] text-text-s truncate uppercase tracking-tighter font-bold">
+                    {instance.version} · {instance.loader}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); pushPanel('instanceDetail', { id: instance.id }); }}
+                    className="w-8 h-8 bg-inner3 border border-border rounded-md flex items-center justify-center text-text-s hover:text-text-p transition-colors"
+                  >
+                    <Play size={14} fill="currentColor" />
+                  </button>
+                  <button
+                    onClick={(e) => handleContextMenu(e, instance.id)}
+                    className="w-8 h-8 bg-inner3 border border-border rounded-md flex items-center justify-center text-text-s hover:text-text-p transition-colors"
+                  >
+                    <MoreVertical size={14} />
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
           {loading && <div className="text-center text-text-s text-xs py-4 italic">Loading instances...</div>}
           {!loading && instances.length === 0 && (
             <div className="text-center text-text-s text-sm py-12 border border-dashed border-border rounded-card">
@@ -142,6 +220,52 @@ export const InstancesPanel: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* ── Context Menu ── */}
+      {contextMenu && (
+        <div 
+          className="fixed bg-inner border border-border rounded-lg shadow-xl z-50 py-1 min-w-[160px]"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+        >
+          <button
+            onClick={() => openSettings(contextMenu.instanceId)}
+            className="w-full px-3 py-2 text-left text-sm text-text-s hover:bg-inner2 hover:text-text-p flex items-center gap-2"
+          >
+            <Settings size={14} />
+            Settings
+          </button>
+          <div className="h-px bg-border my-1" />
+          <button
+            onClick={() => handleDuplicateInstance(contextMenu.instanceId)}
+            className="w-full px-3 py-2 text-left text-sm text-text-s hover:bg-inner2 hover:text-text-p flex items-center gap-2"
+          >
+            <Copy size={14} />
+            Duplicate
+          </button>
+          <button
+            onClick={() => handleOpenFolder(contextMenu.instanceId)}
+            className="w-full px-3 py-2 text-left text-sm text-text-s hover:bg-inner2 hover:text-text-p flex items-center gap-2"
+          >
+            <FolderOpen size={14} />
+            Open Folder
+          </button>
+          <button
+            onClick={() => handleExportModpack(contextMenu.instanceId)}
+            className="w-full px-3 py-2 text-left text-sm text-text-s hover:bg-inner2 hover:text-text-p flex items-center gap-2"
+          >
+            <Download size={14} />
+            Export Modpack
+          </button>
+          <div className="h-px bg-border my-1" />
+          <button
+            onClick={() => handleDeleteInstance(contextMenu.instanceId)}
+            className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-red-400/10 flex items-center gap-2"
+          >
+            <Trash2 size={14} />
+            Delete
+          </button>
+        </div>
+      )}
 
       {/* ── New Instance Dialog ── */}
       <AnimatePresence>
@@ -351,6 +475,17 @@ export const InstancesPanel: React.FC = () => {
           </>
         )}
       </AnimatePresence>
+
+      <InstanceSettingsModal
+        isOpen={settingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+        instanceId={selectedInstanceId}
+      />
+      <InstanceSettingsModal
+        isOpen={settingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+        instanceId={selectedInstanceId}
+      />
     </div>
   );
 };

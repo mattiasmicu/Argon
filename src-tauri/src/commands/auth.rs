@@ -1,12 +1,53 @@
 use tauri::command;
-use tauri::{Emitter, Manager, WebviewWindowBuilder};
+use tauri::{Emitter, Manager};
 use serde::{Deserialize, Serialize};
 use reqwest::Client;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use chrono::Utc;
+use oauth2::{
+    AuthUrl, AuthorizationCode, Client as OAuthClient, ClientId, CsrfToken, EndpointNotSet, EndpointSet,
+    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, StandardRevocableToken, TokenResponse,
+    basic::{
+        BasicErrorResponse, BasicRevocationErrorResponse, BasicTokenIntrospectionResponse,
+        BasicTokenResponse,
+    },
+};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use url::Url;
+
+// like some auth stuff, i just borrowed abit from panora launcher
 
 const CLIENT_ID: &str = "a729e3e8-23aa-4754-9954-28a822c698a0";
+const AUTH_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
+const TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+const REDIRECT_URL_BASE: &str = "http://localhost:3160";
+const REDIRECT_URL: &str = "http://localhost:3160/auth";
+const SERVER_ADDRESS: &str = "127.0.0.1:3160";
+
+const XBOX_AUTHENTICATE_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
+const XSTS_AUTHORIZE_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
+const MINECRAFT_LOGIN_WITH_XBOX_URL: &str = "https://api.minecraftservices.com/authentication/login_with_xbox";
+const MINECRAFT_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";
+
+// ── Type Aliases ────────────────────────────────────────────────────────────────
+
+type OAuth2ClientType = OAuthClient<
+    BasicErrorResponse,
+    BasicTokenResponse,
+    BasicTokenIntrospectionResponse,
+    StandardRevocableToken,
+    BasicRevocationErrorResponse,
+    EndpointSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointSet,
+>;
 
 // ── Structs ────────────────────────────────────────────────────────────────────
 
@@ -20,25 +61,46 @@ pub struct UserProfile {
     pub tier: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DeviceCodeInfo {
-    pub user_code: String,
-    pub device_code: String,
-    pub verification_uri: String,
-    pub expires_in: u64,
-    pub interval: u64,
+struct PendingAuthorization {
+    url: Url,
+    csrf_token: CsrfToken,
+    pkce_verifier: Option<PkceCodeVerifier>,
 }
 
-#[derive(Deserialize)]
-struct MSDeviceCodeResponse {
-    user_code: String,
-    device_code: String,
-    verification_uri: String,
-    expires_in: u64,
-    interval: u64,
+impl std::fmt::Debug for PendingAuthorization {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingAuthorization")
+            .field("url", &self.url)
+            .field("csrf_token", &self.csrf_token)
+            .field("pkce_verifier", &self.pkce_verifier.as_ref().map(|_| "<verifier>"))
+            .finish()
+    }
 }
 
-#[derive(Deserialize)]
+impl Clone for PendingAuthorization {
+    fn clone(&self) -> Self {
+        Self {
+            url: self.url.clone(),
+            csrf_token: self.csrf_token.clone(),
+            pkce_verifier: None, // PKCE verifier cannot be cloned and is consumed on use
+        }
+    }
+}
+
+#[derive(Debug)]
+struct FinishedAuthorization {
+    pending: PendingAuthorization,
+    code: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MsaTokens {
+    access_token: String,
+    refresh_token: Option<String>,
+    expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct MSTokenResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
@@ -46,7 +108,7 @@ struct MSTokenResponse {
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct XboxAuthRequest {
     Properties: XboxAuthProps,
     RelyingParty: String,
@@ -54,7 +116,7 @@ struct XboxAuthRequest {
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct XboxAuthProps {
     AuthMethod: String,
     SiteName: String,
@@ -62,25 +124,25 @@ struct XboxAuthProps {
 }
 
 #[allow(non_snake_case)]
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct XboxAuthResponse {
     Token: String,
     DisplayClaims: DisplayClaims,
 }
 
 #[allow(non_snake_case)]
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct DisplayClaims {
     xui: Vec<Xui>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Xui {
     uhs: String,
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct XSTSRequest {
     Properties: XSTSProps,
     RelyingParty: String,
@@ -88,190 +150,116 @@ struct XSTSRequest {
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct XSTSProps {
     SandboxId: String,
     UserTokens: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[allow(non_snake_case)]
+#[derive(Debug, Deserialize)]
+struct XSTSResponse {
+    Token: String,
+    DisplayClaims: DisplayClaims,
+}
+
+#[derive(Debug, Deserialize)]
 struct MCLinkResponse {
     access_token: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct MCProfileResponse {
     id: String,
     name: String,
     skins: Vec<MCSkin>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct MCSkin {
     url: String,
 }
 
+// Global state for pending auth (to handle the redirect)
+use std::sync::OnceLock;
+static PENDING_AUTH: OnceLock<Arc<Mutex<Option<PendingAuthorization>>>> = OnceLock::new();
+
+fn get_pending_auth() -> Arc<Mutex<Option<PendingAuthorization>>> {
+    PENDING_AUTH.get_or_init(|| Arc::new(Mutex::new(None))).clone()
+}
+
 // ── Commands ───────────────────────────────────────────────────────────────────
 
+/// Start Microsoft OAuth2 authorization flow with local redirect
+/// Opens browser and starts local server to capture the redirect
 #[command]
-pub async fn open_link_window(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    WebviewWindowBuilder::new(
-        &app,
-        "mslink",
-        tauri::WebviewUrl::External(url.parse().map_err(|e: url::ParseError| e.to_string())?),
-    )
-    .title(&format!("Sign in — {}", url))
-    .inner_size(520.0, 700.0)
-    .center()
-    .resizable(false)
-    .build()
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[command]
-pub async fn close_link_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window("mslink") {
-        let _ = win.close().ok();
+pub async fn start_microsoft_auth(app: tauri::AppHandle) -> Result<(), String> {
+    let pending = create_authorization();
+    let auth_url = pending.url.to_string();
+    
+    // Store pending auth for later verification
+    let pending_store = get_pending_auth();
+    let mut guard = pending_store.lock().await;
+    *guard = Some(pending);
+    drop(guard);
+    
+    // Open browser
+    if let Err(e) = open::that(&auth_url) {
+        return Err(format!("Failed to open browser: {}", e));
     }
-    Ok(())
-}
-
-#[command]
-pub async fn start_device_auth() -> Result<DeviceCodeInfo, String> {
-    let client = Client::new();
-
-    let resp = client
-        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
-        .form(&[
-            ("client_id", CLIENT_ID),
-            ("scope", "XboxLive.signin offline_access"),
-        ])
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let text = resp.text().await.map_err(|e| e.to_string())?;
-    println!("[auth] device code response: {}", text);
-    let dc: MSDeviceCodeResponse = serde_json::from_str(&text)
-        .map_err(|e| format!("Device code parse failed: {} — body: {}", e, text))?;
-
-    Ok(DeviceCodeInfo {
-        user_code: dc.user_code,
-        device_code: dc.device_code,
-        verification_uri: dc.verification_uri,
-        expires_in: dc.expires_in,
-        interval: dc.interval,
-    })
-}
-
-/// Spawns the polling loop in the background.
-/// Emits "auth-success" with UserProfile or "auth-error" with a message when done.
-/// Returns immediately so the frontend stays unblocked.
-#[command]
-pub async fn poll_device_auth(
-    app: tauri::AppHandle,
-    device_code: String,
-    interval: u64,
-) -> Result<(), String> {
+    
+    // Start local server in background to handle redirect
+    let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        let client = Client::new();
-        let poll_interval = Duration::from_secs(interval.max(5));
-
-        loop {
-            sleep(poll_interval).await;
-
-            let resp = match client
-                .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
-                .form(&[
-                    ("client_id", CLIENT_ID),
-                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                    ("device_code", device_code.as_str()),
-                ])
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    let _ = app.emit("auth-error", e.to_string());
-                    return;
-                }
-            };
-
-            let text = match resp.text().await {
-                Ok(t) => t,
-                Err(e) => {
-                    let _ = app.emit("auth-error", e.to_string());
-                    return;
-                }
-            };
-
-            let token: MSTokenResponse = match serde_json::from_str(&text) {
-                Ok(t) => t,
-                Err(e) => {
-                    let _ = app.emit("auth-error", format!("Parse failed: {} — body: {}", e, text));
-                    return;
-                }
-            };
-
-            match token.error.as_deref() {
-                Some("authorization_pending") => {
-                    let _ = app.emit("auth-status", "waiting");
-                    continue;
-                }
-                Some("slow_down") => {
-                    sleep(Duration::from_secs(5)).await;
-                    continue;
-                }
-                Some("expired_token") => {
-                    let _ = app.emit("auth-error", "Sign-in timed out. Please try again.");
-                    return;
-                }
-                Some(other) => {
-                    let _ = app.emit("auth-error", format!("Auth error: {}", other));
-                    return;
-                }
-                None => {
-                    let access_token = match token.access_token {
-                        Some(t) => t,
-                        None => {
-                            let _ = app.emit("auth-error", "No access token in response");
-                            return;
-                        }
-                    };
-                    let refresh_token = match token.refresh_token {
-                        Some(t) => t,
-                        None => {
-                            let _ = app.emit("auth-error", "No refresh token in response");
-                            return;
-                        }
-                    };
-
-                    let _ = app.emit("auth-status", "authenticating");
-
-                    match run_xbox_chain(access_token, refresh_token).await {
-                        Ok(profile) => {
-                            let _ = app.emit("auth-success", profile);
-                        }
-                        Err(e) => {
-                            let _ = app.emit("auth-error", e);
+        match start_redirect_server().await {
+            Ok(finished) => {
+                // Exchange code for tokens
+                match finish_authorization(finished).await {
+                    Ok(tokens) => {
+                        let _ = app_handle.emit("auth-status", "authenticating");
+                        match run_xbox_chain(tokens.access_token, tokens.refresh_token.unwrap_or_default()).await {
+                            Ok(profile) => {
+                                let _ = app_handle.emit("auth-success", profile);
+                            }
+                            Err(e) => {
+                                let _ = app_handle.emit("auth-error", e);
+                            }
                         }
                     }
-                    return;
+                    Err(e) => {
+                        let _ = app_handle.emit("auth-error", format!("Token exchange failed: {}", e));
+                    }
                 }
             }
+            Err(e) => {
+                let _ = app_handle.emit("auth-error", format!("Auth server error: {}", e));
+            }
         }
+        
+        // Clear pending auth
+        let pending_store = get_pending_auth();
+        let mut guard = pending_store.lock().await;
+        *guard = None;
     });
+    
+    Ok(())
+}
 
+/// Cancel ongoing authentication
+#[command]
+pub async fn cancel_microsoft_auth() -> Result<(), String> {
+    let pending_store = get_pending_auth();
+    let mut guard = pending_store.lock().await;
+    *guard = None;
     Ok(())
 }
 
 #[command]
 pub async fn refresh_token(refresh: String) -> Result<UserProfile, String> {
     let client = Client::new();
-
+    
     let resp = client
-        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+        .post(TOKEN_URL)
         .form(&[
             ("client_id", CLIENT_ID),
             ("grant_type", "refresh_token"),
@@ -281,18 +269,18 @@ pub async fn refresh_token(refresh: String) -> Result<UserProfile, String> {
         .send()
         .await
         .map_err(|e| e.to_string())?;
-
+    
     let text = resp.text().await.map_err(|e| e.to_string())?;
     let token: MSTokenResponse = serde_json::from_str(&text)
         .map_err(|e| format!("Refresh parse failed: {} — body: {}", e, text))?;
-
+    
     if let Some(err) = token.error {
         return Err(format!("Refresh failed: {}", err));
     }
-
+    
     let access_token = token.access_token.ok_or("No access token")?;
     let refresh_token = token.refresh_token.ok_or("No refresh token")?;
-
+    
     run_xbox_chain(access_token, refresh_token).await
 }
 
@@ -509,7 +497,7 @@ async fn run_xbox_chain(
         .await
         .map_err(|e| format!("Xbox auth failed: {}", e))?;
 
-    let xsts: XboxAuthResponse = client
+    let xsts: XSTSResponse = client
         .post("https://xsts.auth.xboxlive.com/xsts/authorize")
         .json(&XSTSRequest {
             Properties: XSTSProps {
@@ -594,4 +582,241 @@ async fn refresh_microsoft_token(refresh_token: &str) -> Result<(String, String)
     let new_refresh_token = token.refresh_token.ok_or("No refresh token")?;
     
     Ok((access_token, new_refresh_token))
+}
+
+// ── Internal Functions ────────────────────────────────────────────────────────
+
+fn create_authorization() -> PendingAuthorization {
+    let oauth_client = create_oauth_client();
+    
+    let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+    
+    let (url, csrf_token) = oauth_client
+        .authorize_url(CsrfToken::new_random)
+        .add_extra_param("prompt", "select_account")
+        .add_scope(Scope::new("XboxLive.signin".to_string()))
+        .add_scope(Scope::new("offline_access".to_string()))
+        .set_pkce_challenge(pkce_challenge)
+        .url();
+    
+    PendingAuthorization {
+        url,
+        csrf_token,
+        pkce_verifier: Some(pkce_verifier),
+    }
+}
+
+fn create_oauth_client() -> OAuth2ClientType {
+    OAuthClient::new(
+        ClientId::new(CLIENT_ID.to_string())
+    )
+    .set_auth_type(oauth2::AuthType::RequestBody)
+    .set_auth_uri(AuthUrl::new(AUTH_URL.to_string()).unwrap())
+    .set_token_uri(oauth2::TokenUrl::new(TOKEN_URL.to_string()).unwrap())
+    .set_redirect_uri(RedirectUrl::new(REDIRECT_URL.to_string()).unwrap())
+}
+
+async fn finish_authorization(finished: FinishedAuthorization) -> Result<MsaTokens, String> {
+    let oauth_client = create_oauth_client();
+    let http_client = Client::new();
+    
+    let token_response = oauth_client
+        .exchange_code(AuthorizationCode::new(finished.code))
+        .set_pkce_verifier(finished.pending.pkce_verifier.ok_or("Missing PKCE verifier")?)
+        .request_async(&http_client)
+        .await
+        .map_err(|e| format!("Token exchange failed: {:?}", e))?;
+    
+    let expires_in = token_response.expires_in().unwrap_or(Duration::from_secs(3600));
+    let expires_at = Utc::now() + expires_in;
+    
+    Ok(MsaTokens {
+        access_token: token_response.access_token().secret().as_str().into(),
+        refresh_token: token_response.refresh_token().map(|t| t.secret().as_str().into()),
+        expires_at,
+    })
+}
+
+async fn start_redirect_server() -> Result<FinishedAuthorization, String> {
+    println!("[auth] Starting redirect server on {}", SERVER_ADDRESS);
+    
+    let listener = TcpListener::bind(SERVER_ADDRESS)
+        .await
+        .map_err(|e| format!("Failed to bind server: {}", e))?;
+    
+    println!("[auth] Server listening on {}", SERVER_ADDRESS);
+    
+    let mut buf = vec![0u8; 1024];
+    
+    loop {
+        println!("[auth] Waiting for connection...");
+        let (mut stream, addr) = listener.accept()
+            .await
+            .map_err(|e| format!("Failed to accept connection: {}", e))?;
+        
+        println!("[auth] Got connection from {:?}", addr);
+        
+        let mut read = 0;
+        loop {
+            let n = stream.read(&mut buf[read..])
+                .await
+                .map_err(|e| format!("Read error: {}", e))?;
+            
+            if n == 0 {
+                println!("[auth] Connection closed");
+                break;
+            }
+            
+            read += n;
+            
+            if read == buf.len() {
+                buf.resize(buf.len() * 2, 0);
+                continue;
+            }
+            
+            // Try to parse HTTP request
+            let mut headers = [httparse::EMPTY_HEADER; 32];
+            let mut req = httparse::Request::new(&mut headers);
+            let parsed = req.parse(&buf[..read])
+                .map_err(|e| format!("HTTP parse error: {:?}", e))?;
+            
+            if parsed.is_partial() {
+                continue;
+            }
+            
+            println!("[auth] Received HTTP request");
+            
+            if req.method != Some("GET") || req.path.is_none() {
+                let response = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+                let _ = stream.write_all(response).await;
+                break;
+            }
+            
+            let path = req.path.unwrap();
+            let full_url = format!("{}{}", REDIRECT_URL_BASE, path);
+            let url = Url::parse(&full_url)
+                .map_err(|e| format!("URL parse error: {}", e))?;
+            
+            if url.path() != "/auth" {
+                let response = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+                let _ = stream.write_all(response).await;
+                break;
+            }
+            
+            // Parse query parameters
+            let mut error = None;
+            let mut error_description = None;
+            let mut code = None;
+            let mut state = None;
+            
+            for (key, value) in url.query_pairs() {
+                match &*key {
+                    "error" => error = Some(value.to_string()),
+                    "error_description" => error_description = Some(value.to_string()),
+                    "code" => code = Some(value.to_string()),
+                    "state" => state = Some(value.to_string()),
+                    _ => {}
+                }
+            }
+            
+            // Handle errors from Microsoft
+            if let Some(err) = error {
+                let full_error = if let Some(desc) = error_description {
+                    format!("{}: {}", err, desc)
+                } else {
+                    err
+                };
+                
+                let body = format!(
+                    r#"<!DOCTYPE html>
+<html><body>
+<h1>Authentication Error</h1>
+<p>{}</p>
+<p>You can close this window.</p>
+</body></html>"#,
+                    full_error
+                );
+                let response = format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                return Err(format!("Auth error: {}", full_error));
+            }
+            
+            // Verify CSRF token
+            let pending_store = get_pending_auth();
+            let guard = pending_store.lock().await;
+            
+            if let Some(ref pending) = *guard {
+                if let Some(ref received_state) = state {
+                    if received_state != pending.csrf_token.secret() {
+                        let body = r#"<!DOCTYPE html>
+<html><body>
+<h1>CSRF Error</h1>
+<p>Security token mismatch. Please try again.</p>
+</body></html>"#;
+                        let response = format!(
+                            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.write_all(response.as_bytes()).await;
+                        return Err("CSRF token mismatch".to_string());
+                    }
+                }
+                
+                // Check for code
+                if let Some(auth_code) = code {
+                    // Success!
+                    let body = r#"<!DOCTYPE html>
+<html><body>
+<h1>Authentication Successful</h1>
+<p>You can close this window and return to the launcher.</p>
+<script>setTimeout(() => window.close(), 3000);</script>
+</body></html>"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    
+                    let finished = FinishedAuthorization {
+                        pending: pending.clone(),
+                        code: auth_code,
+                    };
+                    
+                    return Ok(finished);
+                } else {
+                    let body = r#"<!DOCTYPE html>
+<html><body>
+<h1>Error</h1>
+<p>Missing authorization code.</p>
+</body></html>"#;
+                    let response = format!(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    return Err("Missing authorization code".to_string());
+                }
+            } else {
+                let body = r#"<!DOCTYPE html>
+<html><body>
+<h1>Error</h1>
+<p>No pending authentication found.</p>
+</body></html>"#;
+                let response = format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                return Err("No pending authentication".to_string());
+            }
+        }
+    }
 }

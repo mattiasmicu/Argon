@@ -37,10 +37,10 @@ pub async fn get_arch() -> Result<String, String> {
 }
 
 #[command]
-pub async fn detect_java_version(app: AppHandle, requiredVersion: String) -> Result<Option<String>, String> {
-    emit_log(&app, "debug", format!("detect_java_version called with requiredVersion: {}", requiredVersion));
+pub async fn detect_java_version(app: AppHandle, required_version: String) -> Result<Option<String>, String> {
+    emit_log(&app, "debug", format!("detect_java_version called with required_version: {}", required_version));
     
-    let required: i32 = requiredVersion.parse().map_err(|e| format!("Invalid version: {}", e))?;
+    let required: i32 = required_version.parse().map_err(|e| format!("Invalid version: {}", e))?;
     
     // Get instance-specific Java directory
     let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;

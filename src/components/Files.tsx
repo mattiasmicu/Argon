@@ -2,25 +2,72 @@ import * as React from 'react';
 import * as Accordion from '@radix-ui/react-accordion';
 import { FolderIcon, FolderOpenIcon, FileIcon } from 'lucide-react';
 
-import {
-  Files as FilesPrimitive,
-  FilesHighlight as FilesHighlightPrimitive,
-  FolderItem as FolderItemPrimitive,
-  FolderHeader as FolderHeaderPrimitive,
-  FolderTrigger as FolderTriggerPrimitive,
-  FolderHighlight as FolderHighlightPrimitive,
-  Folder as FolderPrimitive,
-  FolderIcon as FolderIconPrimitive,
-  FolderContent as FolderContentPrimitive,
-  FileHighlight as FileHighlightPrimitive,
-  File as FilePrimitive,
-  FileIcon as FileIconPrimitive,
-  type FilesProps as FilesPrimitiveProps,
-  type FolderItemProps as FolderItemPrimitiveProps,
-  type FolderContentProps as FolderContentPrimitiveProps,
-  type FileProps as FilePrimitiveProps,
-} from '@/components/animate-ui/primitives/radix/files';
-import { cn } from '@/lib/utils';
+function cn(...classes: (string | undefined | false)[]) {
+  return classes.filter(Boolean).join(' ');
+}
+
+// Local primitive implementations since animate-ui was removed
+type FilesPrimitiveProps = {
+  className?: string;
+  children: React.ReactNode;
+};
+
+const FilesPrimitive = ({ className, children, ...props }: FilesPrimitiveProps & React.HTMLAttributes<HTMLDivElement>) => (
+  <div className={cn('p-2 w-full', className)} {...props}>{children}</div>
+);
+
+const FilesHighlightPrimitive = ({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+  <div className={cn('bg-white/5 rounded-lg pointer-events-none', className)} {...props}>{children}</div>
+);
+
+const FolderItemPrimitive = ({ value, children, ...props }: { value: string; children: React.ReactNode } & React.HTMLAttributes<HTMLDivElement>) => (
+  <Accordion.Item value={value} {...props}>{children}</Accordion.Item>
+);
+
+const FolderHeaderPrimitive = Accordion.Header;
+
+const FolderTriggerPrimitive = ({ children, ...props }: React.HTMLAttributes<HTMLButtonElement>) => (
+  <Accordion.Trigger asChild {...props}><button>{children}</button></Accordion.Trigger>
+);
+
+const FolderHighlightPrimitive = ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+  <div {...props}>{children}</div>
+);
+
+const FolderPrimitive = ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+  <div className="flex items-center justify-between gap-2 p-2 pointer-events-none" {...props}>{children}</div>
+);
+
+const FolderIconPrimitive = ({ closeIcon, openIcon }: { closeIcon: React.ReactNode; openIcon: React.ReactNode }) => {
+  const [isOpen, setIsOpen] = React.useState(false);
+  return <span onClick={() => setIsOpen(!isOpen)}>{isOpen ? openIcon : closeIcon}</span>;
+};
+
+const FolderContentPrimitive = ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+  <Accordion.Content {...props}>{children}</Accordion.Content>
+);
+
+const FileHighlightPrimitive = ({ children, onClick, ...props }: React.HTMLAttributes<HTMLDivElement> & { onClick?: () => void }) => (
+  <div onClick={onClick} {...props}>{children}</div>
+);
+
+const FilePrimitive = ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+  <div className="flex items-center justify-between gap-2 p-2 cursor-pointer" {...props}>{children}</div>
+);
+
+const FileIconPrimitive = ({ children }: { children: React.ReactNode }) => (
+  <span>{children}</span>
+);
+
+// Type definitions
+type FolderItemPrimitiveProps = {
+  value: string;
+  children: React.ReactNode;
+};
+
+type FolderContentPrimitiveProps = {
+  children: React.ReactNode;
+};
 
 type GitStatus = 'untracked' | 'modified' | 'deleted';
 
@@ -107,9 +154,12 @@ function FolderContent(props: FolderContentProps) {
   );
 }
 
-type FileItemProps = FilePrimitiveProps & {
+type FileItemProps = {
   icon?: React.ElementType;
+  className?: string;
+  children: React.ReactNode;
   gitStatus?: GitStatus;
+  onClick?: () => void;
 };
 
 function FileItem({
@@ -117,13 +167,14 @@ function FileItem({
   className,
   children,
   gitStatus,
+  onClick,
   ...props
 }: FileItemProps) {
   return (
-    <FileHighlightPrimitive>
+    <FileHighlightPrimitive onClick={onClick}>
       <FilePrimitive
         className={cn(
-          'flex items-center justify-between gap-2 p-2 pointer-events-none',
+          'flex items-center justify-between gap-2 p-2 cursor-pointer',
           gitStatus === 'untracked' && 'text-green-400',
           gitStatus === 'modified' && 'text-amber-400',
           gitStatus === 'deleted' && 'text-red-400',

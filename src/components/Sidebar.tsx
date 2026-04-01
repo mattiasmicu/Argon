@@ -2,12 +2,15 @@ import React, { useState } from 'react';
 import { Home, Settings as SettingsIcon, Plus, Trash2, Play } from 'lucide-react';
 import { useLauncherStore } from '../store/useLauncherStore';
 import { InstanceCreationModal } from './InstanceCreationModal';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { motion, AnimatePresence } from 'framer-motion';
+import { DropdownMenuItem, DropdownMenuSeparator } from './DropdownMenu';
+import { Tooltip, TooltipTrigger, TooltipContent } from './Tooltip';
 
 export const Sidebar: React.FC = () => {
   const { panelStack, pushPanel, instances, setInstances } = useLauncherStore();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; instanceId: string } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; instanceId: string; instanceName: string } | null>(null);
 
   const isActive = (id: string) => panelStack[panelStack.length - 1].id === id;
   const currentPanel = panelStack[panelStack.length - 1];
@@ -30,113 +33,136 @@ export const Sidebar: React.FC = () => {
     setContextMenu(null);
   };
 
-  const handleContextMenu = (e: React.MouseEvent, instanceId: string) => {
+  const handleContextMenu = (e: React.MouseEvent, instanceId: string, instanceName: string) => {
     e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, instanceId });
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, instanceId, instanceName });
   };
 
-  React.useEffect(() => {
-    const handleClick = () => setContextMenu(null);
-    if (contextMenu) {
-      document.addEventListener('click', handleClick);
-      return () => document.removeEventListener('click', handleClick);
+  const handleContextMenuAction = (action: 'open' | 'delete') => {
+    if (!contextMenu) return;
+    if (action === 'open') {
+      handleInstanceClick(contextMenu.instanceId);
+    } else {
+      handleDeleteInstance(contextMenu.instanceId);
     }
-  }, [contextMenu]);
+    setContextMenu(null);
+  };
 
   return (
     <>
       <div data-tauri-drag-region className="flex flex-col items-center py-4 bg-outer border-r border-border/10 w-[60px]">
-        <button
+        <motion.button
           onClick={() => pushPanel('home')}
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+          transition={{ type: 'spring', stiffness: 400, damping: 17 }}
           className="relative group mb-4"
         >
-          <div className={`w-6 h-6 flex items-center justify-center transition-colors ${isActive('home') ? 'text-text-p' : 'text-text-s group-hover:text-text-p'}`}>
+          <div className={`w-6 h-6 flex items-center justify-center ${isActive('home') ? 'text-text-p' : 'text-text-s'}`}>
             <Home size={20} />
           </div>
           <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-1 h-3 rounded-full transition-all ${isActive('home') ? 'bg-blue-500' : 'bg-transparent'}`} />
-        </button>
+        </motion.button>
 
         <div className="w-8 h-px bg-border/30 mb-4" />
 
         <div className="flex flex-col gap-3 flex-1 overflow-y-auto py-2 w-full px-2">
           {instances.map((instance) => (
-            <button
-              key={instance.id}
-              onClick={() => handleInstanceClick(instance.id)}
-              onContextMenu={(e) => handleContextMenu(e, instance.id)}
-              className="relative group w-full"
-              title={instance.name}
-            >
-              <div className={`w-full aspect-square rounded-xl flex items-center justify-center text-lg transition-all overflow-hidden ${
-                activeInstanceId === instance.id
-                  ? 'bg-inner2 text-text-p ring-2 ring-text-p/50' 
-                  : 'bg-inner3 text-text-s group-hover:text-text-p group-hover:bg-inner2'
-              }`}>
-                {instance.icon ? (
-                  instance.icon.startsWith('data:') ? (
-                    <img src={instance.icon} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <span>{instance.icon}</span>
-                  )
-                ) : (
-                  <span>{instance.name.charAt(0).toUpperCase()}</span>
-                )}
-              </div>
-              {activeInstanceId === instance.id && (
-                <div className="absolute -right-0.5 top-1/2 -translate-y-1/2 w-1 h-4 rounded-full bg-text-p" />
-              )}
-            </button>
+            <Tooltip key={instance.id}>
+              <TooltipTrigger>
+                <button
+                  onClick={() => handleInstanceClick(instance.id)}
+                  onContextMenu={(e) => handleContextMenu(e, instance.id, instance.name)}
+                  className="relative w-full"
+                >
+                  <div className={`w-full aspect-square rounded-xl flex items-center justify-center text-lg overflow-hidden ${
+                    activeInstanceId === instance.id
+                      ? 'bg-inner2 text-text-p ring-2 ring-text-p/50' 
+                      : 'bg-inner3 text-text-s'
+                  }`}>
+                    {instance.icon && instance.icon.startsWith('/') ? (
+                      <img 
+                        src={convertFileSrc(instance.icon)} 
+                        alt="" 
+                        className="w-full h-full object-cover"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    ) : (
+                      <span>{instance.name.charAt(0).toUpperCase()}</span>
+                    )}
+                  </div>
+                  {activeInstanceId === instance.id && (
+                    <div className="absolute -right-0.5 top-1/2 -translate-y-1/2 w-1 h-4 rounded-full bg-text-p" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>
+                <p>{instance.name}</p>
+              </TooltipContent>
+            </Tooltip>
           ))}
           
-          <button
+          <motion.button
             onClick={() => setShowCreateModal(true)}
-            className="relative group w-full"
-            title="Create new instance"
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+            className="relative w-full"
           >
-            <div className="w-full aspect-square rounded-xl flex items-center justify-center bg-inner3/50 text-text-s group-hover:text-text-p transition-colors border border-dashed border-border group-hover:border-text-s">
+            <div className="w-full aspect-square rounded-xl flex items-center justify-center bg-inner3/50 text-text-s border border-dashed border-border">
               <Plus size={20} />
             </div>
-          </button>
+          </motion.button>
         </div>
 
         <div className="w-8 h-px bg-border/30 mb-4" />
 
-        <button
-          onClick={() => pushPanel('settings')}
-          className={`relative group ${isActive('settings') ? 'text-text-p' : 'text-text-s group-hover:text-text-p'}`}
-          title="Settings"
-        >
-          <SettingsIcon size={20} />
-          <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-1 h-3 rounded-full transition-all ${isActive('settings') ? 'bg-orange-500' : 'bg-transparent'}`} />
-        </button>
+          <motion.button
+            onClick={() => pushPanel('settings')}
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+            className={`relative group ${isActive('settings') ? 'text-text-p' : 'text-text-s'}`}
+            title="Settings"
+          >
+            <SettingsIcon size={20} />
+            <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-1 h-3 rounded-full transition-all ${isActive('settings') ? 'bg-orange-500' : 'bg-transparent'}`} />
+          </motion.button>
       </div>
 
       <InstanceCreationModal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} />
 
-      {contextMenu && (
-        <div className="fixed bg-inner border border-border rounded-lg shadow-xl z-50 py-1 min-w-[140px]"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-        >
-          <button
-            onClick={() => {
-              handleInstanceClick(contextMenu.instanceId);
-              setContextMenu(null);
-            }}
-            className="w-full px-3 py-2 text-left text-sm text-text-s hover:bg-inner2 hover:text-text-p flex items-center gap-2"
+      {/* Context Menu */}
+      <AnimatePresence>
+        {contextMenu && (
+          <div 
+            className="fixed inset-0 z-[99999]"
+            onClick={() => setContextMenu(null)}
           >
-            <Play size={14} />
-            Open
-          </button>
-          <div className="h-px bg-border my-1" />
-          <button
-            onClick={() => handleDeleteInstance(contextMenu.instanceId)}
-            className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-red-400/10 flex items-center gap-2"
-          >
-            <Trash2 size={14} />
-            Delete
-          </button>
-        </div>
-      )}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+              className="fixed bg-inner border border-border rounded-xl shadow-xl overflow-hidden w-56 py-1 z-[99999]"
+              style={{ top: contextMenu.y, left: contextMenu.x }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-3 py-2 border-b border-border">
+                <p className="text-xs text-text-s font-medium uppercase tracking-wider">{contextMenu.instanceName}</p>
+              </div>
+              <DropdownMenuItem onClick={() => handleContextMenuAction('open')} icon={<Play size={14} />}>
+                Open
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => handleContextMenuAction('delete')} variant="destructive" icon={<Trash2 size={14} />}>
+                Delete
+              </DropdownMenuItem>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </>
   );
 };

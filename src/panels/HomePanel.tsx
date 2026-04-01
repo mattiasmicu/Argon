@@ -1,5 +1,7 @@
 import React from 'react';
 import { useLauncherStore } from '../store/useLauncherStore';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { motion } from 'framer-motion';
 import { Play, Users, Clock, Sword } from 'lucide-react';
 
 export const HomePanel: React.FC = () => {
@@ -27,15 +29,24 @@ export const HomePanel: React.FC = () => {
               className="flex items-center gap-4 p-4 bg-inner2 border border-border rounded-xl hover:bg-inner3 transition-colors cursor-pointer group"
             >
               <div className="w-14 h-14 bg-inner3 rounded-lg overflow-hidden flex-shrink-0">
-                {instance.icon ? (
-                  instance.icon.startsWith('data:') ? (
-                    <img src={instance.icon} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="w-full h-full flex items-center justify-center text-2xl">{instance.icon}</span>
-                  )
-                ) : (
-                  <span className="w-full h-full flex items-center justify-center text-xl font-bold">{instance.name.charAt(0).toUpperCase()}</span>
-                )}
+              {instance.icon && instance.icon.startsWith('/') ? (
+                <motion.img 
+                  src={convertFileSrc(instance.icon)} 
+                  alt="" 
+                  className="w-full h-full object-cover"
+                  whileHover={{ scale: 1.05 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+              ) : (
+                <motion.span 
+                  className="w-full h-full flex items-center justify-center text-xl font-bold"
+                  whileHover={{ scale: 1.1 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                >
+                  {instance.name.charAt(0).toUpperCase()}
+                </motion.span>
+              )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
@@ -93,15 +104,24 @@ export const HomePanel: React.FC = () => {
                 onClick={() => pushPanel('instanceDetail', { id: instance.id })}
                 className="p-3 bg-inner2 border border-border rounded-xl hover:bg-inner3 transition-colors cursor-pointer"
               >
-                <div className="w-10 h-10 bg-inner3 rounded-lg mb-2 flex items-center justify-center text-lg">
-                  {instance.icon ? (
-                    instance.icon.startsWith('data:') ? (
-                      <img src={instance.icon} alt="" className="w-full h-full object-cover rounded" />
-                    ) : (
-                      <span>{instance.icon}</span>
-                    )
+                <div className="w-10 h-10 bg-inner3 rounded-lg mb-2 flex items-center justify-center text-lg overflow-hidden">
+                  {instance.icon && instance.icon.startsWith('/') ? (
+                    <motion.img 
+                      src={convertFileSrc(instance.icon)} 
+                      alt="" 
+                      className="w-full h-full object-cover rounded"
+                      whileHover={{ scale: 1.05 }}
+                      transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                    />
                   ) : (
-                    <span className="font-bold">{instance.name.charAt(0).toUpperCase()}</span>
+                    <motion.span 
+                      className="font-bold"
+                      whileHover={{ scale: 1.1 }}
+                      transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                    >
+                      {instance.name.charAt(0).toUpperCase()}
+                    </motion.span>
                   )}
                 </div>
                 <h4 className="text-xs font-medium text-text-p truncate">{instance.name}</h4>

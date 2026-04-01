@@ -222,7 +222,7 @@ pub async fn download_version(app: AppHandle, version_id: String) -> Result<(), 
     emit_log(&app, "info", "✓ Client JAR downloaded.");
 
     // ── Stage 2: Libraries ───────────────────────────────────────────────────
-    let libs_dir = app_data.join("libraries");
+    let _libs_dir = app_data.join("libraries");
     let mut libs_to_download: Vec<(String, DownloadFile, String)> = Vec::new(); // (name, download_info, path_str)
     
     for lib in &version_info.libraries {
@@ -304,7 +304,7 @@ pub async fn download_version(app: AppHandle, version_id: String) -> Result<(), 
                 downloaded_count += 1;
                 emit_log(&app, "info", format!("[{}/{}] {}", i + 1, total_libs, lib_name));
             }
-            Ok((lib_name, Ok(false))) => {
+            Ok((_lib_name, Ok(false))) => {
                 // Already existed, don't log
             }
             Ok((lib_name, Err(e))) => {

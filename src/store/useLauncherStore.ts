@@ -61,6 +61,7 @@ interface LauncherStore {
   addAccount: (user: UserProfile) => void;
   removeAccount: (uuid: string) => void;
   setActiveAccount: (uuid: string) => void;
+  reorderAccounts: (fromIndex: number, toIndex: number) => void;
 
   // Theme
   theme: 'dark' | 'light';
@@ -69,6 +70,7 @@ interface LauncherStore {
   // Instances
   instances: Instance[];
   setInstances: (instances: Instance[]) => void;
+  updateInstance: (id: string, updates: Partial<Instance>) => void;
   activeInstance: Instance | null;
   setActiveInstance: (instance: Instance | null) => void;
 
@@ -134,6 +136,12 @@ export const useLauncherStore = create<LauncherStore>()(
       setActiveAccount: (uuid) => set((state) => ({
         auth: state.accounts.find(a => a.uuid === uuid) || state.auth,
       })),
+      reorderAccounts: (fromIndex, toIndex) => set((state) => {
+        const newAccounts = [...state.accounts];
+        const [moved] = newAccounts.splice(fromIndex, 1);
+        newAccounts.splice(toIndex, 0, moved);
+        return { accounts: newAccounts };
+      }),
 
       // Theme
       theme: 'dark',
@@ -146,6 +154,11 @@ export const useLauncherStore = create<LauncherStore>()(
       // Instances
       instances: [],
       setInstances: (instances) => set({ instances }),
+      updateInstance: (id, updates) => set((state) => ({
+        instances: state.instances.map((inst) =>
+          inst.id === id ? { ...inst, ...updates } : inst
+        ),
+      })),
       activeInstance: null,
       setActiveInstance: (instance) => set({ activeInstance: instance }),
 
@@ -173,7 +186,7 @@ export const useLauncherStore = create<LauncherStore>()(
       })),
     }),
     {
-      name: 'argon-launcher-storage',
+      name: 'spring-launcher-storage',
       partialize: (state) => ({ 
         auth: state.auth, 
         accounts: state.accounts,

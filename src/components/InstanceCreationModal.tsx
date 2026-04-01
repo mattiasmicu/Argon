@@ -3,6 +3,11 @@ import { useLauncherStore } from '../store/useLauncherStore';
 import { X, Search, Loader2, Upload } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { AnimatePresence, motion } from 'framer-motion';
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from '@/components/DialogPrimitive';
 
 interface VersionEntry {
   id: string;
@@ -23,9 +28,12 @@ const loaders = [
   { id: 'neoforge', name: 'NeoForge', desc: 'Modern Forge fork' },
 ];
 
+const STEPS = ['name', 'loader', 'version'] as const;
+type Step = typeof STEPS[number];
+
 export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({ isOpen, onClose }) => {
   const { setInstances } = useLauncherStore();
-  const [step, setStep] = useState<'name' | 'loader' | 'version'>('name');
+  const [step, setStep] = useState<Step>('name');
   const [name, setName] = useState('');
   const [nameError, setNameError] = useState('');
   const [selectedLoader, setSelectedLoader] = useState('vanilla');
@@ -57,9 +65,7 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({ is
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setCustomIcon(reader.result as string);
-      };
+      reader.onloadend = () => setCustomIcon(reader.result as string);
       reader.readAsDataURL(file);
     }
   };
@@ -90,17 +96,15 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({ is
     setCreating(true);
     setCreateError('');
     try {
-      const instance = await invoke<any>('create_instance', { 
-        name: name.trim(), 
-        version: selectedVersion, 
+      const instance = await invoke<any>('create_instance', {
+        name: name.trim(),
+        version: selectedVersion,
         loader: selectedLoader,
         icon: customIcon,
       });
-      
-      // Install loader if not vanilla
+
       if (selectedLoader !== 'vanilla' && instance?.id) {
         try {
-          // Get latest stable loader version
           const loaderVersions = await invoke<any[]>('get_loader_versions', {
             loader: selectedLoader,
             mcVersion: selectedVersion,
@@ -116,10 +120,9 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({ is
           }
         } catch (e: any) {
           console.error('Failed to install loader:', e);
-          // Don't fail instance creation if loader install fails
         }
       }
-      
+
       const updated = await invoke<any[]>('list_instances');
       setInstances(updated ?? []);
       onClose();
@@ -137,82 +140,63 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({ is
     return true;
   });
 
-  const closeDialog = () => {
-    if (creating) return;
-    onClose();
-  };
-
-  if (!isOpen) return null;
-
-  // Animation variants based on 'from' prop style like animate-ui
-  const dialogVariants = {
-    initial: { opacity: 0, scale: 0.95, y: 10 },
-    animate: { opacity: 1, scale: 1, y: 0 },
-    exit: { opacity: 0, scale: 0.95, y: 10 }
-  };
-
-  const backdropVariants = {
-    initial: { opacity: 0 },
-    animate: { opacity: 1 },
-    exit: { opacity: 0 }
-  };
+  const stepIndex = STEPS.indexOf(step);
 
   return (
-    <AnimatePresence>
-      <motion.div
-        key="backdrop"
-        variants={backdropVariants}
-        initial="initial"
-        animate="animate"
-        exit="exit"
-        transition={{ duration: 0.2 }}
-        onClick={closeDialog}
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
-      />
-      <motion.div
-        key="modal"
-        variants={dialogVariants}
-        initial="initial"
-        animate="animate"
-        exit="exit"
-        transition={{ 
-          type: 'spring',
-          stiffness: 400,
-          damping: 30,
-          mass: 0.8
-        }}
-        className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open && !creating) onClose(); }}>
+      <DialogContent
+        className="p-0 gap-0 w-[500px] bg-inner border border-border rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        style={{ maxHeight: '600px' }}
       >
-        <div
-          className="pointer-events-auto w-[460px] bg-outer border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden"
-          style={{ maxHeight: '540px' }}
-        >
-            {/* Modal header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-inner2 flex-shrink-0">
-              <div>
-                <h2 className="text-sm font-bold text-text-p">New Instance</h2>
-                <p className="text-[11px] text-text-s mt-0.5">
-                  {step === 'name' ? 'Step 1 of 3 — Name' : step === 'loader' ? 'Step 2 of 3 — Loader' : 'Step 3 of 3 — Version'}
-                </p>
-              </div>
-              <button onClick={closeDialog} disabled={creating} className="text-text-d cursor-pointer p-1">
-                <X size={15} />
-              </button>
-            </div>
+        {/* ── Top bar: title + close ── */}
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 flex-shrink-0">
+          <div>
+            <DialogTitle className="text-sm font-bold text-text-p">New Instance</DialogTitle>
+            <p className="text-[11px] text-text-d mt-0.5">
+              {step === 'name' ? 'Step 1 of 3 — Name & Icon' : step === 'loader' ? 'Step 2 of 3 — Choose Loader' : 'Step 3 of 3 — Pick Version'}
+            </p>
+          </div>
+          <button
+            onClick={() => { if (!creating) onClose(); }}
+            disabled={creating}
+            className="text-text-d hover:text-text-s transition-colors cursor-pointer p-1.5 rounded-lg hover:bg-inner2"
+          >
+            <X size={14} />
+          </button>
+        </div>
 
-            <AnimatePresence mode="wait">
-              {/* Step 1: Name & Icon */}
-              {step === 'name' && (
-                <motion.div
-                  key="name"
-                  initial={{ opacity: 0, x: 12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -12 }}
-                  transition={{ duration: 0.14 }}
-                  className="p-5 flex flex-col gap-4"
-                >
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-text-s">Instance Name</label>
+        {/* ── Inner content panel (the light rounded card) ── */}
+        <div className="bg-inner2 mx-2 rounded-xl flex flex-col overflow-hidden flex-1 min-h-0">
+          <AnimatePresence mode="wait">
+
+            {/* Step 1: Name & Icon */}
+            {step === 'name' && (
+              <motion.div
+                key="name"
+                initial={{ opacity: 0, x: 14 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -14 }}
+                transition={{ duration: 0.15 }}
+                className="p-5 flex flex-col gap-4"
+              >
+                <div className="flex gap-4 items-start">
+                  {/* Icon upload */}
+                  <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-[72px] h-[72px] bg-inner border-2 border-dashed border-border rounded-xl flex items-center justify-center cursor-pointer overflow-hidden hover:border-text-d transition-colors"
+                    >
+                      {customIcon
+                        ? <img src={customIcon} alt="" className="w-full h-full object-cover" />
+                        : <Upload size={20} className="text-text-d" />}
+                    </div>
+                    <span className="text-[10px] text-text-d">Icon</span>
+                    <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                  </div>
+
+                  {/* Name */}
+                  <div className="flex-1 flex flex-col gap-1.5 pt-0.5">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-text-s">Instance Name</label>
                     <input
                       autoFocus
                       type="text"
@@ -221,196 +205,193 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({ is
                       onKeyDown={e => e.key === 'Enter' && handleNameNext()}
                       placeholder="e.g. Survival World, Modded 1.21..."
                       maxLength={32}
-                      className="bg-inner2 border border-border rounded-md px-3 py-2.5 text-sm text-text-p placeholder:text-text-d outline-none"
+                      className="bg-inner border border-border rounded-lg px-3 py-2.5 text-sm text-text-p placeholder:text-text-d outline-none focus:border-text-d transition-colors"
                     />
-                    <div className="flex justify-between items-center">
-                      {nameError
-                        ? <p className="text-[11px] text-red-400">{nameError}</p>
-                        : <span />}
+                    <div className="flex justify-between">
+                      {nameError ? <p className="text-[10px] text-red-400">{nameError}</p> : <span />}
                       <p className="text-[10px] text-text-d">{name.length}/32</p>
                     </div>
                   </div>
+                </div>
+              </motion.div>
+            )}
 
-                  {/* Custom Icon Upload */}
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-text-s">Instance Icon</label>
-                    <div className="flex items-center gap-3">
-                      <div 
-                        onClick={() => fileInputRef.current?.click()}
-                        className="w-16 h-16 bg-inner2 border border-border rounded-lg flex items-center justify-center cursor-pointer overflow-hidden"
-                      >
-                        {customIcon ? (
-                          <img src={customIcon} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                          <Upload size={20} className="text-text-s" />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <input
-                          ref={fileInputRef}
-                          type="file"
-                          accept="image/*"
-                          onChange={handleImageUpload}
-                          className="hidden"
-                        />
-                        <button
-                          onClick={() => fileInputRef.current?.click()}
-                          className="px-3 py-1.5 bg-inner2 border border-border rounded-md text-xs text-text-s cursor-pointer"
-                        >
-                          Upload Image
-                        </button>
-                        <p className="text-[10px] text-text-d mt-1">Optional - defaults to first letter</p>
-                      </div>
+            {/* Step 2: Loader */}
+            {step === 'loader' && (
+              <motion.div
+                key="loader"
+                initial={{ opacity: 0, x: 14 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -14 }}
+                transition={{ duration: 0.15 }}
+                className="p-5 flex flex-col gap-2"
+              >
+                <p className="text-[10px] font-bold uppercase tracking-wider text-text-d mb-1">Select Mod Loader</p>
+                {loaders.map(loader => (
+                  <button
+                    key={loader.id}
+                    onClick={() => setSelectedLoader(loader.id)}
+                    className={`p-3 rounded-xl border text-left flex items-center justify-between cursor-pointer transition-colors ${
+                      selectedLoader === loader.id
+                        ? 'border-text-p bg-text-p/10'
+                        : 'border-border bg-inner hover:border-text-d'
+                    }`}
+                  >
+                    <div>
+                      <p className="font-bold text-sm text-text-p leading-none">{loader.name}</p>
+                      <p className="text-[11px] text-text-s mt-1">{loader.desc}</p>
                     </div>
-                  </div>
+                    <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
+                      selectedLoader === loader.id ? 'border-text-p bg-text-p' : 'border-border'
+                    }`}>
+                      {selectedLoader === loader.id && <div className="w-1.5 h-1.5 bg-inner rounded-full" />}
+                    </div>
+                  </button>
+                ))}
+              </motion.div>
+            )}
 
-                  <div className="flex gap-2">
-                    <button onClick={closeDialog} className="flex-1 py-2 bg-inner2 border border-border rounded-md text-xs font-bold text-text-s cursor-pointer">
-                      Cancel
-                    </button>
-                    <button onClick={handleNameNext} className="flex-1 py-2 bg-text-p text-inner rounded-md text-xs font-bold cursor-pointer">
-                      Next →
-                    </button>
-                  </div>
-                </motion.div>
-              )}
-
-              {/* Step 2: Loader */}
-              {step === 'loader' && (
-                <motion.div
-                  key="loader"
-                  initial={{ opacity: 0, x: 12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -12 }}
-                  transition={{ duration: 0.14 }}
-                  className="p-5 flex flex-col gap-4"
-                >
-                  <div className="flex flex-col gap-2">
-                    {loaders.map(loader => (
+            {/* Step 3: Version */}
+            {step === 'version' && (
+              <motion.div
+                key="version"
+                initial={{ opacity: 0, x: 14 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -14 }}
+                transition={{ duration: 0.15 }}
+                className="flex flex-col flex-1 min-h-0 p-4 gap-3"
+              >
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex bg-inner border border-border rounded-lg p-0.5 gap-0.5">
+                    {(['release', 'snapshot', 'all'] as const).map(f => (
                       <button
-                        key={loader.id}
-                        onClick={() => setSelectedLoader(loader.id)}
-                        className={`p-3 rounded-lg border text-left flex items-center justify-between cursor-pointer ${
-                          selectedLoader === loader.id
-                            ? 'border-text-p bg-text-p/10'
-                            : 'border-border'
+                        key={f}
+                        onClick={() => setVersionFilter(f)}
+                        className={`px-2.5 py-1 text-[10px] font-bold rounded-md capitalize cursor-pointer transition-colors ${
+                          versionFilter === f ? 'bg-text-p text-inner' : 'text-text-s hover:text-text-p'
                         }`}
                       >
-                        <div>
-                          <p className="font-bold text-sm text-text-p">{loader.name}</p>
-                          <p className="text-xs text-text-s">{loader.desc}</p>
-                        </div>
-                        {selectedLoader === loader.id && (
-                          <div className="w-4 h-4 rounded-full bg-text-p flex items-center justify-center">
-                            <div className="w-1.5 h-1.5 bg-inner rounded-full" />
-                          </div>
-                        )}
+                        {f}
                       </button>
                     ))}
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setStep('name')}
-                      disabled={creating}
-                      className="px-4 py-2 bg-inner2 border border-border rounded-md text-xs font-bold text-text-s cursor-pointer disabled:opacity-50"
-                    >
-                      ← Back
-                    </button>
-                    <button onClick={handleLoaderNext} className="flex-1 py-2 bg-text-p text-inner rounded-md text-xs font-bold cursor-pointer">
-                      Next →
-                    </button>
+                  <div className="flex-1 flex items-center gap-2 bg-inner border border-border rounded-lg px-2.5 py-1.5">
+                    <Search size={11} className="text-text-d flex-shrink-0" />
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      placeholder="Search versions..."
+                      className="flex-1 bg-transparent text-xs text-text-p placeholder:text-text-d outline-none"
+                    />
                   </div>
-                </motion.div>
-              )}
+                </div>
 
-              {/* Step 3: Version */}
-              {step === 'version' && (
-                <motion.div
-                  key="version"
-                  initial={{ opacity: 0, x: 12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -12 }}
-                  transition={{ duration: 0.14 }}
-                  className="flex flex-col flex-1 min-h-0 p-4 gap-3"
-                >
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <div className="flex bg-inner2 border border-border rounded-md p-0.5 gap-0.5">
-                      {(['release', 'snapshot', 'all'] as const).map(f => (
-                        <button
-                          key={f}
-                          onClick={() => setVersionFilter(f)}
-                          className={`px-2.5 py-1 text-[10px] font-bold rounded capitalize cursor-pointer ${
-                            versionFilter === f ? 'bg-text-p text-inner' : 'text-text-s'
-                          }`}
-                        >
-                          {f}
-                        </button>
-                      ))}
+                <div className="overflow-y-auto bg-inner border border-border rounded-xl scroll-hide flex-1">
+                  {versionsLoading ? (
+                    <div className="flex items-center justify-center p-8 gap-2 text-text-s text-xs">
+                      <Loader2 size={13} className="animate-spin" /> Loading versions...
                     </div>
-                    <div className="flex-1 flex items-center gap-2 bg-inner2 border border-border rounded-md px-2.5 py-1.5">
-                      <Search size={11} className="text-text-d flex-shrink-0" />
-                      <input
-                        type="text"
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                        placeholder="Search versions..."
-                        className="flex-1 bg-transparent text-xs text-text-p placeholder:text-text-d outline-none"
-                      />
-                    </div>
-                  </div>
+                  ) : filtered.length === 0 ? (
+                    <div className="p-6 text-center text-text-s text-xs">No versions match.</div>
+                  ) : (
+                    filtered.map(v => (
+                      <button
+                        key={v.id}
+                        onClick={() => setSelectedVersion(v.id)}
+                        className={`w-full flex items-center justify-between px-4 py-2.5 border-b border-border last:border-0 text-left cursor-pointer transition-colors ${
+                          selectedVersion === v.id ? 'bg-text-p/10' : 'hover:bg-inner2'
+                        }`}
+                      >
+                        <span className={`text-xs font-medium ${selectedVersion === v.id ? 'text-text-p' : 'text-text-s'}`}>
+                          {v.id}
+                        </span>
+                        <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                          v.type === 'release' ? 'bg-green-500/15 text-green-400' : 'bg-yellow-500/15 text-yellow-400'
+                        }`}>
+                          {v.type}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
 
-                  <div className="overflow-y-auto bg-inner2 border border-border rounded-lg scroll-hide flex-1">
-                    {versionsLoading ? (
-                      <div className="flex items-center justify-center p-8 gap-2 text-text-s text-xs">
-                        <Loader2 size={13} className="animate-spin" /> Loading versions...
-                      </div>
-                    ) : filtered.length === 0 ? (
-                      <div className="p-6 text-center text-text-s text-xs">No versions match.</div>
-                    ) : (
-                      filtered.map(v => (
-                        <button
-                          key={v.id}
-                          onClick={() => setSelectedVersion(v.id)}
-                          className={`w-full flex items-center justify-between px-4 py-2 border-b border-border last:border-0 text-left cursor-pointer ${
-                            selectedVersion === v.id ? 'bg-text-p/10 text-text-p' : 'text-text-s'
-                          }`}
-                        >
-                          <span className="text-xs font-medium">{v.id}</span>
-                          <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                            v.type === 'release' ? 'bg-green-500/15 text-green-400' : 'bg-yellow-500/15 text-yellow-400'
-                          }`}>
-                            {v.type}
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
+                {createError && <p className="text-[10px] text-red-400 flex-shrink-0">{createError}</p>}
+              </motion.div>
+            )}
 
-                  {createError && <p className="text-[11px] text-red-400 flex-shrink-0">{createError}</p>}
+          </AnimatePresence>
+        </div>
 
-                  <div className="flex gap-2 flex-shrink-0">
-                    <button
-                      onClick={() => setStep('loader')}
-                      disabled={creating}
-                      className="px-4 py-2 bg-inner2 border border-border rounded-md text-xs font-bold text-text-s cursor-pointer disabled:opacity-50"
-                    >
-                      ← Back
-                    </button>
-                    <button
-                      onClick={handleCreate}
-                      disabled={!selectedVersion || creating}
-                      className="flex-1 py-2 bg-text-p text-inner rounded-md text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >  
-                      {creating
-                        ? <><Loader2 size={12} className="animate-spin" /> Creating...</>
-                        : `Create · ${selectedVersion || '—'}`}
-                    </button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+        {/* ── Footer: step pills + action buttons (lives in the dark outer shell) ── */}
+        <div className="flex items-center gap-3 px-4 py-4 flex-shrink-0">
+          {/* Step pills (like the 3 rounded rects in the screenshot) */}
+          <div className="flex gap-1.5">
+            {STEPS.map((s, i) => (
+              <div
+                key={s}
+                className={`h-1.5 rounded-full transition-all duration-300 ${
+                  i === stepIndex
+                    ? 'w-5 bg-text-p'
+                    : i < stepIndex
+                    ? 'w-1.5 bg-text-s'
+                    : 'w-1.5 bg-border'
+                }`}
+              />
+            ))}
           </div>
-        </motion.div>
-    </AnimatePresence>
+
+          <div className="flex-1 flex gap-2">
+            {/* Back / Cancel */}
+            {step === 'name' ? (
+              <button
+                onClick={() => { if (!creating) onClose(); }}
+                className="px-4 py-2 bg-inner2 border border-border rounded-lg text-xs font-bold text-text-s cursor-pointer hover:bg-outer transition-colors"
+              >
+                Cancel
+              </button>
+            ) : (
+              <button
+                onClick={() => setStep(STEPS[stepIndex - 1])}
+                disabled={creating}
+                className="px-4 py-2 bg-inner2 border border-border rounded-lg text-xs font-bold text-text-s cursor-pointer hover:bg-outer transition-colors disabled:opacity-50"
+              >
+                ← Back
+              </button>
+            )}
+
+            {/* Next / Create */}
+            {step === 'name' && (
+              <button
+                onClick={handleNameNext}
+                className="flex-1 py-2 bg-text-p text-inner rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 transition-opacity"
+              >
+                Continue →
+              </button>
+            )}
+            {step === 'loader' && (
+              <button
+                onClick={handleLoaderNext}
+                className="flex-1 py-2 bg-text-p text-inner rounded-lg text-xs font-bold cursor-pointer hover:opacity-90 transition-opacity"
+              >
+                Continue →
+              </button>
+            )}
+            {step === 'version' && (
+              <button
+                onClick={handleCreate}
+                disabled={!selectedVersion || creating}
+                className="flex-1 py-2 bg-text-p text-inner rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+              >
+                {creating
+                  ? <><Loader2 size={12} className="animate-spin" /> Creating...</>
+                  : `Create · ${selectedVersion || '—'}`}
+              </button>
+            )}
+          </div>
+        </div>
+
+      </DialogContent>
+    </Dialog>
   );
 };

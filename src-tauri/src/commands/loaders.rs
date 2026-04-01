@@ -2,7 +2,6 @@ use tauri::{command, AppHandle, Emitter, Manager};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use futures_util::StreamExt;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LoaderVersion {
@@ -190,9 +189,9 @@ async fn install_fabric_or_quilt(
 
 async fn install_forge(
     app: &AppHandle,
-    instance_dir: &PathBuf,
-    mc_version: &str,
-    loader_version: &str,
+    _instance_dir: &PathBuf,
+    _mc_version: &str,
+    _loader_version: &str,
 ) -> Result<(), String> {
     emit_log(app, "info", "Forge installation not yet implemented".to_string());
     Err("Forge installation not yet implemented".to_string())

@@ -172,6 +172,16 @@ pub async fn install_mod(
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+pub struct InstalledMod {
+    pub id: String,
+    pub name: String,
+    pub filename: String,
+    pub version: String,
+    pub enabled: bool,
+    pub size: u64,
+}
+
 #[command]
 pub async fn uninstall_mod(
     app: AppHandle,
@@ -188,4 +198,141 @@ pub async fn uninstall_mod(
         fs::remove_file(&mod_file).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[command]
+pub async fn list_installed_mods(
+    app: AppHandle,
+    instance_id: String,
+) -> Result<Vec<InstalledMod>, String> {
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mods_dir = app_data.join("instances").join(&instance_id).join("mods");
+    
+    if !mods_dir.exists() {
+        return Ok(vec![]);
+    }
+    
+    let mut mods = Vec::new();
+    
+    for entry in fs::read_dir(&mods_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let metadata = entry.metadata().map_err(|e| e.to_string())?;
+        let filename = entry.file_name().to_string_lossy().to_string();
+        
+        // Skip disabled mods (files starting with .)
+        let enabled = !filename.starts_with('.');
+        let display_name = if enabled { filename.clone() } else { filename.trim_start_matches('.').to_string() };
+        
+        // Try to extract version from filename (e.g., mod-1.2.3.jar -> 1.2.3)
+        let version = extract_version(&display_name);
+        
+        // Extract mod name from filename (remove version and extension)
+        let name = extract_mod_name(&display_name);
+        
+        mods.push(InstalledMod {
+            id: filename.clone(),
+            name,
+            filename: display_name,
+            version,
+            enabled,
+            size: metadata.len(),
+        });
+    }
+    
+    // Sort alphabetically by name
+    mods.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    
+    Ok(mods)
+}
+
+fn extract_version(filename: &str) -> String {
+    // Try to find version pattern like -1.2.3 or _1.2.3 or +1.2.3
+    let re = regex::Regex::new(r"[-_+](\d+\.\d+(?:\.\d+)?)").unwrap();
+    if let Some(caps) = re.captures(filename) {
+        if let Some(version) = caps.get(1) {
+            return version.as_str().to_string();
+        }
+    }
+    "Unknown".to_string()
+}
+
+fn extract_mod_name(filename: &str) -> String {
+    // Remove common suffixes and extensions
+    let name = filename
+        .replace(".jar", "")
+        .replace(".zip", "")
+        .replace("-fabric", "")
+        .replace("-forge", "")
+        .replace("-quilt", "");
+    
+    // Try to remove version
+    let re = regex::Regex::new(r"[-_+]?\d+\.\d+(?:\.\d+)?.*$").unwrap();
+    let name = re.replace(&name, "").to_string();
+    
+    if name.is_empty() {
+        filename.to_string()
+    } else {
+        name.replace(['-', '_'], " ")
+    }
+}
+
+#[command]
+pub async fn toggle_mod(
+    app: AppHandle,
+    instance_id: String,
+    filename: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mods_dir = app_data.join("instances").join(&instance_id).join("mods");
+    
+    let current_path = if enabled {
+        // Enable: rename from .filename to filename
+        mods_dir.join(format!(".{}", filename))
+    } else {
+        // Disable: rename from filename to .filename
+        mods_dir.join(&filename)
+    };
+    
+    let new_filename = if enabled {
+        filename.clone()
+    } else {
+        format!(".{}", filename)
+    };
+    let new_path = mods_dir.join(&new_filename);
+    
+    if current_path.exists() {
+        fs::rename(&current_path, &new_path).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
+#[command]
+pub async fn read_file_content(
+    app: AppHandle,
+    instance_id: String,
+    relative_path: String,
+) -> Result<String, String> {
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let target = app_data
+        .join("instances")
+        .join(&instance_id)
+        .join(&relative_path);
+    
+    if !target.exists() {
+        return Err("File not found".to_string());
+    }
+    
+    if !target.is_file() {
+        return Err("Path is not a file".to_string());
+    }
+    
+    // Read with size limit (10MB)
+    let metadata = fs::metadata(&target).map_err(|e| e.to_string())?;
+    if metadata.len() > 10 * 1024 * 1024 {
+        return Err("File too large (>10MB)".to_string());
+    }
+    
+    fs::read_to_string(&target).map_err(|e| e.to_string())
 }

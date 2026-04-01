@@ -1,5 +1,5 @@
 [package]
-name = "argon-mc"
+name = "spring"
 version = "0.0.0"
 description = "A modern Minecraft launcher"
 authors = ["you"]
@@ -9,7 +9,7 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = ["protocol-asset", "devtools"] }
 tauri-plugin-shell = "2"
 tauri-plugin-deep-link = "2"
 serde = { version = "1", features = ["derive"] }
@@ -30,6 +30,9 @@ dirs = "5.0"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }
 copy_dir = "0.1"
+regex = "1"
+oauth2 = "5.0"
+httparse = "1.9"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

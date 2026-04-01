@@ -17,6 +17,7 @@ pub struct Instance {
 pub struct InstancePatch {
     pub name: Option<String>,
     pub last_played: Option<i64>,
+    pub icon: Option<String>,
 }
 
 #[command]
@@ -153,9 +154,38 @@ pub async fn update_instance(
     if let Some(lp) = patch.last_played {
         instance.last_played = Some(lp);
     }
+    if let Some(icon) = patch.icon {
+        instance.icon = Some(icon);
+    }
 
     let content = serde_json::to_string_pretty(&instance).map_err(|e| e.to_string())?;
     fs::write(json_path, content).map_err(|e| e.to_string())?;
 
     Ok(instance)
+}
+
+#[command]
+pub async fn upload_instance_icon(
+    app: AppHandle,
+    id: String,
+    icon_data: Vec<u8>,
+    extension: String,
+) -> Result<String, String> {
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let instance_dir = app_data.join("instances").join(&id);
+    
+    // Create icons directory if it doesn't exist
+    let icons_dir = instance_dir.join("icons");
+    fs::create_dir_all(&icons_dir).map_err(|e| e.to_string())?;
+    
+    // Generate unique filename
+    let icon_filename = format!("icon.{}", extension);
+    let icon_path = icons_dir.join(&icon_filename);
+    
+    // Write the icon data to file
+    fs::write(&icon_path, &icon_data).map_err(|e| e.to_string())?;
+    
+    // Return the full absolute path so convertFileSrc can convert it to asset:// URL
+    let full_path = icon_path.to_string_lossy().to_string();
+    Ok(full_path)
 }

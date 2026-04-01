@@ -3,15 +3,28 @@ import { useLauncherStore } from '../store/useLauncherStore';
 import {
   Play, Package, Folder, FileText, Download, Terminal,
   Square, Copy, Check, ArrowLeft, Plus, FolderOpen,
-  FileCode, FileJson, FileImage, Archive,
+  FileCode, FileJson, FileImage, Archive, Search, Trash2, MoreVertical,
+  Box, Settings, ArrowUpDown, RefreshCw
 } from 'lucide-react';
 import { ModBrowser } from '../components/ModBrowser';
+import { InstanceSettingsModal } from '../components/InstanceSettingsModal';
 import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { motion } from 'framer-motion';
 import {
   Files, FileItem, FolderItem, FolderTrigger, FolderContent, SubFiles,
-} from '../components/animate-ui/components/radix/files';
+} from '../components/Files';
 
+function getIconUrl(iconPath: string | undefined): string | undefined {
+  if (!iconPath) return undefined;
+  // If it's already a full path starting with /, use convertFileSrc
+  if (iconPath.startsWith('/')) {
+    return convertFileSrc(iconPath);
+  }
+  // If it's a relative path (old format), construct the full path
+  // This handles the case where old instances have relative paths stored
+  return undefined; // Will show fallback for old relative paths
+}
 function fileIcon(name: string): React.ElementType {
   if (name.endsWith('.jar') || name.endsWith('.zip')) return Archive;
   if (name.endsWith('.json'))                          return FileJson;
@@ -28,13 +41,21 @@ function fmtSize(bytes: number): string {
 
 interface FSEntry { name: string; path: string; is_dir: boolean; size: number; }
 
+interface InstalledMod {
+  id: string;
+  name: string;
+  filename: string;
+  version: string;
+  enabled: boolean;
+  size: number;
+}
+
 export const InstanceDetailPanel: React.FC<{ id: string }> = ({ id }) => {
-  const { instances, logs, appendLog, clearLogs, settings, auth, downloadProgress, updateDownloadProgress } = useLauncherStore();
+  const { instances, logs, appendLog, clearLogs, settings, auth, updateDownloadProgress } = useLauncherStore();
   const instance = instances.find(i => i.id === id);
 
   const [activeTab, setActiveTab]     = useState<'mods' | 'files' | 'logs'>('mods');
   const [status, setStatus]           = useState<'ready' | 'downloading' | 'launching' | 'running'>('ready');
-  const [stageLabel, setStageLabel]   = useState('');
   const [copied, setCopied]           = useState(false);
   const [files, setFiles]             = useState<FSEntry[]>([]);
   const [currentPath, setCurrentPath] = useState('');
@@ -43,6 +64,20 @@ export const InstanceDetailPanel: React.FC<{ id: string }> = ({ id }) => {
   // null = currently loading, FSEntry[] = loaded, undefined = not opened yet
   const [subFiles, setSubFiles] = useState<Record<string, FSEntry[] | null>>({});
   const logEndRef = useRef<HTMLDivElement>(null);
+  // File viewer state
+  const [openFile, setOpenFile] = useState<{ path: string; name: string } | null>(null);
+  
+  // Mods state
+  const [installedMods, setInstalledMods] = useState<InstalledMod[]>([]);
+  const [modSearch, setModSearch] = useState('');
+  const [modFilter, setModFilter] = useState<'all' | 'mods' | 'shaders' | 'resourcepacks' | 'updates' | 'disabled'>('all');
+  const [showModBrowser, setShowModBrowser] = useState(false);
+  
+  // Instance settings modal
+  const [showInstanceSettings, setShowInstanceSettings] = useState(false);
+  
+  // Mod action menu (three dots)
+  const [modActionMenu, setModActionMenu] = useState<{ mod: InstalledMod; x: number; y: number } | null>(null);
 
   useEffect(() => {
     const ul1 = listen('launch-log',        (e: any) => appendLog(e.payload.line, e.payload.level));
@@ -50,13 +85,13 @@ export const InstanceDetailPanel: React.FC<{ id: string }> = ({ id }) => {
     const ul3 = listen('download-progress', (e: any) => {
       const p = e.payload;
       updateDownloadProgress({ file: p.file, current: p.current, total: p.total, percent: p.percent });
-      if      (p.stage === 'client')    setStageLabel('Downloading client...');
-      else if (p.stage === 'libraries') setStageLabel(`Libraries ${p.current}/${p.total}`);
-      else if (p.stage === 'assets')    setStageLabel(`Assets ${p.current}/${p.total}`);
-      else if (p.stage === 'done')      setStageLabel('Download complete!');
+      if      (p.stage === 'client')    appendLog('Downloading client...', 'info');
+      else if (p.stage === 'libraries') appendLog(`Libraries ${p.current}/${p.total}`, 'info');
+      else if (p.stage === 'assets')    appendLog(`Assets ${p.current}/${p.total}`, 'info');
+      else if (p.stage === 'done')      appendLog('Download complete!', 'info');
     });
     const ul4 = listen('launch-exit', () => {
-      setStatus('ready'); setStageLabel(''); appendLog('Minecraft exited.', 'info');
+      setStatus('ready'); appendLog('Minecraft exited.', 'info');
     });
     return () => { ul1.then(f=>f()); ul2.then(f=>f()); ul3.then(f=>f()); ul4.then(f=>f()); };
   }, []);
@@ -75,6 +110,22 @@ export const InstanceDetailPanel: React.FC<{ id: string }> = ({ id }) => {
       setSubFiles({});
     }
   }, [activeTab, instance, currentPath]);
+
+  useEffect(() => {
+    if (activeTab === 'mods' && instance) {
+      loadInstalledMods();
+    }
+  }, [activeTab, instance]);
+
+  const loadInstalledMods = async () => {
+    if (!instance) return;
+    try {
+      const mods = await invoke<InstalledMod[]>('list_installed_mods', {
+        instanceId: instance.id,
+      });
+      setInstalledMods(mods);
+    } catch (e) { console.error('list_installed_mods:', e); }
+  };
 
   const loadDir = async (relPath: string, setter: (f: FSEntry[]) => void) => {
     if (!instance) return;
@@ -109,7 +160,7 @@ export const InstanceDetailPanel: React.FC<{ id: string }> = ({ id }) => {
 
   const handlePlay = async () => {
     if (!instance || !auth) return;
-    clearLogs(); setActiveTab('logs'); setStatus('downloading'); setStageLabel('Starting download...');
+    clearLogs(); setActiveTab('logs'); setStatus('downloading'); appendLog('Starting download...', 'info');
     try {
       const requiredJava = await invoke<number>('get_java_version_requirement', { versionId: instance.version });
       appendLog(`Minecraft ${instance.version} requires Java ${requiredJava}`, 'info');
@@ -121,11 +172,10 @@ export const InstanceDetailPanel: React.FC<{ id: string }> = ({ id }) => {
         appendLog(`Java ${requiredJava} downloaded`, 'info');
       } else { appendLog('Using existing Java installation', 'info'); }
       await invoke('download_version', { versionId: instance.version });
-      setStatus('launching'); setStageLabel('Launching...');
-      appendLog('Launching Minecraft...', 'info');
+      setStatus('launching'); appendLog('Launching Minecraft...', 'info');
       await invoke('launch_instance', { id: instance.id, javaPath, ramMb: settings.ramMb, username: auth.username, uuid: auth.uuid, accessToken: auth.token });
-      setStatus('running'); setStageLabel('Running');
-    } catch (err) { appendLog(`Launch error: ${err}`, 'error'); setStatus('ready'); setStageLabel(''); }
+      setStatus('running'); appendLog('Minecraft is running', 'info');
+    } catch (err) { appendLog(`Launch error: ${err}`, 'error'); setStatus('ready'); }
   };
 
   const handleCopyLogs = () => {
@@ -138,78 +188,293 @@ export const InstanceDetailPanel: React.FC<{ id: string }> = ({ id }) => {
   const breadcrumb = currentPath ? currentPath.split('/') : [];
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="p-6 bg-inner2 border-b border-border flex items-center justify-between">
+    <div className="h-full flex flex-col p-6 gap-4">
+      {/* Header Card - Matching wireframe exactly */}
+      <div className="bg-inner2 rounded-2xl p-5 border border-border flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <div className="w-14 h-14 bg-inner3 rounded-md border border-border flex items-center justify-center text-text-d">
-            {instance.icon ? <img src={instance.icon} alt="" /> : <Package size={28} />}
-          </div>
+          <motion.div 
+            className="w-[72px] h-[72px] bg-inner3 rounded-xl border border-border overflow-hidden flex-shrink-0"
+            whileHover={{ scale: 1.05 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+          >
+            {getIconUrl(instance.icon) ? (
+              <img 
+                src={getIconUrl(instance.icon)} 
+                alt="" 
+                className="w-full h-full object-cover"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <Package size={36} className="text-text-d" />
+              </div>
+            )}
+          </motion.div>
           <div>
-            <h1 className="text-xl font-bold text-text-p leading-tight">{instance.name}</h1>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-[10px] bg-inner3 px-1.5 py-0.5 rounded text-text-s font-bold border border-border uppercase">{instance.version} · {instance.loader}</span>
-              <span className="text-[10px] text-text-d font-medium">{status === 'ready' ? 'Ready to play' : stageLabel}</span>
-            </div>
+            <h1 className="text-2xl font-semibold text-text-p">{instance.name}</h1>
+            <span className="text-sm text-text-s">{instance.version} · {instance.loader}</span>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          <button onClick={handlePlay} disabled={status !== 'ready'}
-            className={`px-8 py-2.5 rounded-md font-bold text-sm transition-all flex items-center gap-2 shadow-lg shadow-black/20 ${status === 'ready' ? 'bg-text-p text-inner hover:scale-[1.02]' : 'bg-inner3 text-text-d cursor-not-allowed'}`}>
-            {status === 'ready'       && <><Play size={14} fill="currentColor" /> Play</>}
-            {status === 'downloading' && <><Download size={14} className="animate-bounce" /> Downloading</>}
-            {status === 'launching'   && <><Terminal size={14} /> Launching</>}
-            {status === 'running'     && <><Square size={14} /> Running</>}
-          </button>
-          {status === 'downloading' && downloadProgress && (
-            <div className="w-48 flex flex-col gap-1">
-              <div className="h-1.5 bg-inner3 rounded-full overflow-hidden border border-border">
-                <div className="h-full bg-text-p transition-all duration-150 rounded-full" style={{ width: `${downloadProgress.percent}%` }} />
-              </div>
-              <span className="text-[9px] text-text-d text-right">{downloadProgress.percent.toFixed(0)}% — {downloadProgress.file}</span>
-            </div>
+        <div className="flex items-center gap-3">
+          <motion.button 
+            onClick={handlePlay} 
+            disabled={status !== 'ready'}
+            whileHover={status === 'ready' ? { scale: 1.1 } : {}}
+            whileTap={status === 'ready' ? { scale: 0.9 } : {}}
+            transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+            className={`px-10 py-3 rounded-xl font-bold text-sm flex items-center gap-2 ${status === 'ready' ? 'bg-white text-black hover:brightness-110' : 'bg-inner3 text-text-d cursor-not-allowed'}`}
+          >
+            {status === 'ready'       && <><Play size={16} fill="currentColor" /> Play</>}
+            {status === 'downloading' && <><Download size={16} className="animate-bounce" /> Downloading</>}
+            {status === 'launching'   && <><Terminal size={16} /> Launching</>}
+            {status === 'running'     && <><Square size={16} /> Running</>}
+          </motion.button>
+          <motion.button 
+            onClick={() => setShowInstanceSettings(true)}
+            whileHover={{ scale: 1.25 }}
+            whileTap={{ scale: 0.9 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+            className="p-3 rounded-xl text-text-s hover:text-white"
+          >
+            <Settings size={24} />
+          </motion.button>
+          <motion.button 
+            whileHover={{ scale: 1.25 }}
+            whileTap={{ scale: 0.9 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+            className="p-3 rounded-xl text-text-s hover:text-white"
+          >
+            <MoreVertical size={24} />
+          </motion.button>
+        </div>
+      </div>
+
+      {/* Main Content Card - Mod Section */}
+      <div className="flex-1 bg-inner2 rounded-2xl border border-border overflow-hidden flex flex-col">
+        {/* Content tabs */}
+        <div className="flex items-center gap-1 p-2 border-b border-border">
+          {[
+            ...(instance.loader !== 'vanilla' ? [{ id: 'mods', icon: Package, label: 'Mods' }] : []),
+            { id: 'files', icon: Folder, label: 'Files' },
+            { id: 'logs', icon: FileText, label: 'Logs', badge: logs.length > 0 },
+          ].map((tab) => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id as any)}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-2 ${activeTab === tab.id ? 'bg-text-p text-inner' : 'text-text-s hover:text-text-p hover:bg-inner'}`}>
+              <tab.icon size={14} />
+              {tab.label}
+              {tab.badge && activeTab !== tab.id && <span className="w-2 h-2 rounded-full bg-red-400" />}
+            </button>
+          ))}
+          {activeTab === 'logs' && logs.length > 0 && (
+            <button onClick={handleCopyLogs} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-inner border border-border rounded-lg text-[11px] font-bold text-text-s hover:text-text-p transition-colors">
+              {copied ? <><Check size={12} className="text-green-400" /> Copied!</> : <><Copy size={12} /> Copy logs</>}
+            </button>
           )}
         </div>
-      </div>
 
-      {/* Tabs */}
-      <div className="flex items-end gap-6 px-8 pt-4 border-b border-border bg-inner">
-        {[
-          ...(instance.loader !== 'vanilla' ? [{ id: 'mods', icon: Package, label: 'Mods' }] : []),
-          { id: 'files', icon: Folder, label: 'Files' },
-          { id: 'logs', icon: FileText, label: 'Logs', badge: logs.length > 0 },
-        ].map((tab) => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id as any)}
-            className={`pb-3 text-xs font-bold uppercase tracking-widest transition-colors relative flex items-center gap-2 ${activeTab === tab.id ? 'text-text-p' : 'text-text-d hover:text-text-s'}`}>
-            <tab.icon size={14} />
-            {tab.label}
-            {tab.badge && activeTab !== tab.id && <span className="w-1.5 h-1.5 rounded-full bg-text-p" />}
-            {activeTab === tab.id && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-text-p" />}
-          </button>
-        ))}
-        {activeTab === 'logs' && logs.length > 0 && (
-          <button onClick={handleCopyLogs} className="ml-auto mb-3 flex items-center gap-1.5 px-2.5 py-1 bg-inner2 border border-border rounded text-[11px] font-bold text-text-s hover:text-text-p transition-colors">
-            {copied ? <><Check size={12} className="text-green-400" /> Copied!</> : <><Copy size={12} /> Copy logs</>}
-          </button>
-        )}
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6 scroll-hide">
+        {/* Content area */}
+        <div className="flex-1 overflow-hidden p-4">
 
         {activeTab === 'mods' && (
-          <div className="h-full flex flex-col">
-            <div className="flex-1 overflow-hidden">
-              <ModBrowser mcVersion={instance.version} loader={instance.loader}
-                onInstall={async (mod) => {
-                  appendLog(`Installing ${mod.name}...`, 'info');
-                  try {
-                    await invoke('install_mod', { instanceId: instance.id, modId: mod.id, source: mod.source, mcVersion: instance.version, loader: instance.loader });
-                    appendLog(`${mod.name} installed!`, 'info');
-                  } catch (err) { appendLog(`Failed to install ${mod.name}: ${err}`, 'error'); }
-                }}
-              />
+          <div className="h-full flex flex-col gap-4">
+            {/* Search and Actions Row */}
+            <div className="flex items-center gap-3">
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-d" size={16} />
+                <input
+                  type="text"
+                  value={modSearch}
+                  onChange={(e) => setModSearch(e.target.value)}
+                  placeholder={`Search ${installedMods.length} projects...`}
+                  className="w-full pl-10 pr-4 py-2 bg-inner2 border border-border rounded-lg text-sm text-text-p placeholder:text-text-d focus:outline-none focus:border-text-s"
+                />
+              </div>
+              <button
+                onClick={() => setShowModBrowser(true)}
+                className="px-4 py-2 bg-text-p text-inner font-bold text-sm rounded-lg hover:opacity-90 transition-opacity flex items-center gap-2"
+              >
+                <Box size={16} /> Browse content
+              </button>
+              <button className="px-4 py-2 bg-inner2 border border-border text-text-s font-bold text-sm rounded-lg hover:bg-inner3 transition-colors flex items-center gap-2">
+                <FolderOpen size={16} /> Upload files
+              </button>
             </div>
+
+            {/* Filter Buttons */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {[
+                { key: 'all', label: 'All' },
+                { key: 'mods', label: 'Mods' },
+                { key: 'shaders', label: 'Shaders' },
+                { key: 'resourcepacks', label: 'Resource Packs' },
+                { key: 'updates', label: 'Updates' },
+                { key: 'disabled', label: 'Disabled' },
+              ].map((filter) => (
+                <button
+                  key={filter.key}
+                  onClick={() => setModFilter(filter.key as any)}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                    modFilter === filter.key
+                      ? 'bg-text-p text-inner'
+                      : 'bg-inner2 border border-border text-text-s hover:text-text-p'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Sort/Action Bar */}
+            <div className="flex items-center gap-4 text-xs text-text-s">
+              <button className="flex items-center gap-1 hover:text-text-p transition-colors">
+                <ArrowUpDown size={14} /> Alphabetical
+              </button>
+              <button className="flex items-center gap-1 text-green-400 hover:text-green-300 transition-colors">
+                <Download size={14} /> Update all
+              </button>
+              <button
+                onClick={loadInstalledMods}
+                className="flex items-center gap-1 hover:text-text-p transition-colors"
+              >
+                <RefreshCw size={14} /> Refresh
+              </button>
+            </div>
+
+            {/* Mods Table */}
+            <div className="flex-1 overflow-hidden border border-border rounded-lg">
+              {/* Table Header */}
+              <div className="flex items-center gap-4 px-4 py-3 bg-inner2 border-b border-border text-xs font-bold text-text-s">
+                <div className="w-5">
+                  <input type="checkbox" className="rounded border-border" />
+                </div>
+                <div className="flex-1">Project</div>
+                <div className="w-48">Version</div>
+                <div className="w-32 text-right">Actions</div>
+              </div>
+
+              {/* Table Body */}
+              <div className="overflow-y-auto h-[calc(100%-44px)] scroll-hide">
+                {installedMods.length === 0 ? (
+                  <div className="p-8 text-center text-text-d text-sm italic">
+                    No mods installed. Click "Browse content" to add mods.
+                  </div>
+                ) : (
+                  installedMods
+                    .filter((mod) => {
+                      if (modSearch && !mod.name.toLowerCase().includes(modSearch.toLowerCase())) return false;
+                      if (modFilter === 'disabled' && mod.enabled) return false;
+                      if (modFilter === 'mods' && !mod.filename.endsWith('.jar')) return false;
+                      return true;
+                    })
+                    .map((mod) => (
+                      <div
+                        key={mod.id}
+                        className={`flex items-center gap-4 px-4 py-3 border-b border-border hover:bg-inner2/50 transition-colors ${
+                          !mod.enabled ? 'opacity-50' : ''
+                        }`}
+                      >
+                        <div className="w-5">
+                          <input type="checkbox" className="rounded border-border" />
+                        </div>
+                        <div className="flex-1 flex items-center gap-3">
+                          <div className="w-10 h-10 bg-inner2 border border-border rounded-lg flex items-center justify-center">
+                            <Package size={20} className="text-text-s" />
+                          </div>
+                          <div>
+                            <div className="font-bold text-sm text-text-p">{mod.name}</div>
+                            <div className="text-xs text-text-d">{mod.filename}</div>
+                          </div>
+                        </div>
+                        <div className="w-48">
+                          <div className="font-bold text-sm text-text-p">{mod.version}</div>
+                          <div className="text-xs text-text-d truncate">{mod.filename}</div>
+                        </div>
+                        <div className="w-32 flex items-center justify-end gap-2">
+                          <button
+                            onClick={async () => {
+                              await invoke('toggle_mod', {
+                                instanceId: instance!.id,
+                                filename: mod.filename,
+                                enabled: !mod.enabled,
+                              });
+                              loadInstalledMods();
+                            }}
+                            className={`w-12 h-6 rounded-full transition-colors relative ${
+                              mod.enabled ? 'bg-green-500' : 'bg-gray-600'
+                            }`}
+                          >
+                            <div
+                              className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-all ${
+                                mod.enabled ? 'left-6' : 'left-0.5'
+                              }`}
+                            />
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await invoke('uninstall_mod', {
+                                instanceId: instance!.id,
+                                filename: mod.filename,
+                              });
+                              loadInstalledMods();
+                            }}
+                            className="p-1.5 text-text-d hover:text-red-400 transition-colors"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                          <button 
+                            onClick={(e) => {
+                              const rect = (e.target as HTMLElement).getBoundingClientRect();
+                              setModActionMenu({ mod, x: rect.left, y: rect.bottom });
+                            }}
+                            className="p-1.5 text-text-d hover:text-text-s transition-colors"
+                          >
+                            <MoreVertical size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                )}
+              </div>
+            </div>
+
+            {/* Mod Browser Modal */}
+            {showModBrowser && instance && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-inner border border-border rounded-lg w-full max-w-4xl h-[80vh] flex flex-col">
+                  <div className="flex items-center justify-between p-4 border-b border-border">
+                    <h3 className="text-text-p font-bold">Browse Mods</h3>
+                    <button
+                      onClick={() => setShowModBrowser(false)}
+                      className="text-text-d hover:text-text-s"
+                    >
+                      <Check size={20} />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-hidden p-4">
+                    <ModBrowser
+                      mcVersion={instance.version}
+                      loader={instance.loader}
+                      onInstall={async (mod) => {
+                        appendLog(`Installing ${mod.name}...`, 'info');
+                        try {
+                          await invoke('install_mod', {
+                            instanceId: instance.id,
+                            modId: mod.id,
+                            source: mod.source,
+                            mcVersion: instance.version,
+                            loader: instance.loader,
+                          });
+                          appendLog(`${mod.name} installed!`, 'info');
+                          loadInstalledMods();
+                        } catch (err) {
+                          appendLog(`Failed to install ${mod.name}: ${err}`, 'error');
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -295,7 +560,12 @@ export const InstanceDetailPanel: React.FC<{ id: string }> = ({ id }) => {
                                             <span className="text-[11px] text-text-d pl-2 py-1 block">Empty</span>
                                           ) : (
                                             grandChildren.map(g => (
-                                              <FileItem key={g.path} icon={fileIcon(g.name)}>
+                                              <FileItem 
+                                                key={g.path} 
+                                                icon={fileIcon(g.name)}
+                                                onClick={() => setOpenFile({ path: g.path, name: g.name })}
+                                                className="cursor-pointer"
+                                              >
                                                 <span className="flex-1 truncate">{g.name}</span>
                                                 <span className="text-[10px] text-text-d ml-2 tabular-nums">{fmtSize(g.size)}</span>
                                               </FileItem>
@@ -307,7 +577,12 @@ export const InstanceDetailPanel: React.FC<{ id: string }> = ({ id }) => {
                                   );
                                 }
                                 return (
-                                  <FileItem key={child.path} icon={fileIcon(child.name)}>
+                                  <FileItem 
+                                    key={child.path} 
+                                    icon={fileIcon(child.name)}
+                                    onClick={() => setOpenFile({ path: child.path, name: child.name })}
+                                    className="cursor-pointer"
+                                  >
                                     <span className="flex-1 truncate">{child.name}</span>
                                     <span className="text-[10px] text-text-d ml-2 tabular-nums">{fmtSize(child.size)}</span>
                                   </FileItem>
@@ -320,13 +595,18 @@ export const InstanceDetailPanel: React.FC<{ id: string }> = ({ id }) => {
                     );
                   }
                   return (
-                    <FileItem key={entry.path} icon={fileIcon(entry.name)}>
+                    <FileItem 
+                      key={entry.path} 
+                      icon={fileIcon(entry.name)}
+                      onClick={() => setOpenFile({ path: entry.path, name: entry.name })}
+                      className="cursor-pointer"
+                    >
                       <span className="flex-1 truncate">{entry.name}</span>
                       <span className="text-[10px] text-text-d ml-2 tabular-nums">{fmtSize(entry.size)}</span>
                     </FileItem>
                   );
                 })}
-              </Files>
+                </Files>
             </div>
           </div>
         )}
@@ -344,6 +624,67 @@ export const InstanceDetailPanel: React.FC<{ id: string }> = ({ id }) => {
           </div>
         )}
       </div>
+      </div>
+
+      {/* File Viewer Modal */}
+      {openFile && instance && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-inner border border-border rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="text-text-p font-bold">{openFile.name}</h3>
+              <button onClick={() => setOpenFile(null)} className="text-text-d hover:text-text-s">
+                Close
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <p className="text-text-s text-sm">File viewer not implemented yet.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mod Action Menu (Three Dots) */}
+      {modActionMenu && (
+        <>
+          <div 
+            className="fixed inset-0 z-40"
+            onClick={() => setModActionMenu(null)}
+          />
+          <div 
+            className="fixed z-50 bg-inner border border-border rounded-lg shadow-lg py-1 min-w-[160px]"
+            style={{ left: modActionMenu.x, top: modActionMenu.y }}
+          >
+            <button
+              onClick={async () => {
+                await invoke('open_in_finder', {
+                  instanceId: instance!.id,
+                  relativePath: `mods/${modActionMenu.mod.filename}`,
+                });
+                setModActionMenu(null);
+              }}
+              className="w-full px-3 py-2 text-left text-sm text-text-s hover:bg-inner2 hover:text-text-p flex items-center gap-2"
+            >
+              <FolderOpen size={14} /> Open folder
+            </button>
+            <button
+              onClick={() => {
+                // Export modpack functionality - TODO
+                setModActionMenu(null);
+              }}
+              className="w-full px-3 py-2 text-left text-sm text-text-s hover:bg-inner2 hover:text-text-p flex items-center gap-2"
+            >
+              <Package size={14} /> Export modpack
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Instance Settings Modal */}
+      <InstanceSettingsModal
+        isOpen={showInstanceSettings}
+        onClose={() => setShowInstanceSettings(false)}
+        instanceId={instance.id}
+      />
     </div>
   );
 };

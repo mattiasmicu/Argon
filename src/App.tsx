@@ -16,10 +16,12 @@ export const App: React.FC = () => {
     invoke('list_instances').then((res: any) => {
       if (res) setInstances(res);
     });
-
-    // 3. Apply Theme
-    document.documentElement.classList.toggle('light', theme === 'light');
   }, []);
+
+  // Apply theme whenever it changes
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light');
+  }, [theme]);
 
   return <Shell />;
 };

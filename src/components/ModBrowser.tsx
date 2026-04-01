@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Download, Filter, X, ExternalLink, Heart, ChevronLeft, Package } from 'lucide-react';
+import { Search, Download, Filter, ExternalLink, Heart, ChevronLeft, Package, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface ModVersion {
@@ -43,16 +43,16 @@ export const ModBrowser: React.FC<ModBrowserProps> = ({ mcVersion, loader, onIns
   const [searchQuery, setSearchQuery] = useState('');
   const [mods, setMods] = useState<Mod[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedSource, setSelectedSource] = useState<'all' | 'modrinth' | 'curseforge'>('all');
-  const [showFilters, setShowFilters] = useState(false);
-  const [autoFilter, setAutoFilter] = useState(true);
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<'mods' | 'resourcepacks' | 'datapacks' | 'shaders'>('mods');
+  const [selectedSource] = useState<'all' | 'modrinth' | 'curseforge'>('all');
+  const [selectedCategories] = useState<string[]>([]);
   const [installingMod, setInstallingMod] = useState<string | null>(null);
   const [selectedMod, setSelectedMod] = useState<Mod | null>(null);
   const [modVersions, setModVersions] = useState<ModVersion[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
-
-  const categories = ['Adventure', 'Utility', 'Performance', 'Decoration', 'Technology', 'Magic', 'API/Library', 'Optimization'];
+  const [currentPage, setCurrentPage] = useState(1);
+  const [sortBy, setSortBy] = useState<'relevance' | 'downloads' | 'follows' | 'newest'>('relevance');
+  const [viewCount, setViewCount] = useState(20);
 
   // Load recommended mods on mount
   useEffect(() => {
@@ -162,12 +162,6 @@ export const ModBrowser: React.FC<ModBrowserProps> = ({ mcVersion, loader, onIns
     }
   }, [searchQuery, selectedSource, selectedCategories]);
 
-  const toggleCategory = (cat: string) => {
-    setSelectedCategories(prev => 
-      prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
-    );
-  };
-
   const formatNumber = (num: number): string => {
     if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
     if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
@@ -195,78 +189,112 @@ export const ModBrowser: React.FC<ModBrowserProps> = ({ mcVersion, loader, onIns
   };
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header with search */}
-      <div className="flex items-center gap-3 mb-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-s" size={16} />
+    <div className="flex flex-col h-full bg-outer">
+      {/* Header - Install content to instance */}
+      <div className="mb-4">
+        <h2 className="text-text-p font-bold text-lg mb-4">Install content to instance</h2>
+        
+        {/* Tabs */}
+        <div className="flex items-center gap-2 mb-4">
+          {[
+            { key: 'mods', label: 'Mods' },
+            { key: 'resourcepacks', label: 'Resource Packs' },
+            { key: 'datapacks', label: 'Data Packs' },
+            { key: 'shaders', label: 'Shaders' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key as any)}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+                activeTab === tab.key
+                  ? 'bg-text-p text-inner'
+                  : 'text-text-s hover:text-text-p'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Search */}
+        <div className="relative mb-4">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-d" size={18} />
           <input
             type="text"
-            placeholder="Search mods..."
+            placeholder={`Search ${activeTab}...`}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-inner2 border border-border rounded-md text-sm text-text-p placeholder:text-text-s"
+            className="w-full pl-10 pr-4 py-3 bg-inner2 border border-border rounded-lg text-sm text-text-p placeholder:text-text-d focus:outline-none focus:border-text-s"
           />
         </div>
-        
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className={`p-2 rounded-md border cursor-pointer ${showFilters ? 'bg-text-p text-inner border-text-p' : 'border-border text-text-s'}`}
-        >
-          <Filter size={18} />
-        </button>
-        
-        <select
-          value={selectedSource}
-          onChange={(e) => setSelectedSource(e.target.value as any)}
-          className="px-3 py-2 bg-inner2 border border-border rounded-md text-sm text-text-p"
-        >
-          <option value="all">All Sources</option>
-          <option value="modrinth">Modrinth</option>
-          <option value="curseforge">CurseForge</option>
-        </select>
-      </div>
 
-      {/* Filters */}
-      {showFilters && (
-        <div className="mb-4 p-3 bg-inner2 rounded-lg border border-border">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-text-p">Filters</h3>
-            <button onClick={() => setShowFilters(false)} className="text-text-s">
-              <X size={14} />
+        {/* Filters Bar */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            {/* Sort Dropdown */}
+            <div className="relative">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="appearance-none px-4 py-2 pr-10 bg-inner2 border border-border rounded-lg text-sm text-text-p focus:outline-none cursor-pointer"
+              >
+                <option value="relevance">Sort by: Relevance</option>
+                <option value="downloads">Sort by: Downloads</option>
+                <option value="follows">Sort by: Follows</option>
+                <option value="newest">Sort by: Newest</option>
+              </select>
+              <Filter size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-d pointer-events-none" />
+            </div>
+
+            {/* View Dropdown */}
+            <div className="relative">
+              <select
+                value={viewCount}
+                onChange={(e) => setViewCount(Number(e.target.value))}
+                className="appearance-none px-4 py-2 pr-10 bg-inner2 border border-border rounded-lg text-sm text-text-p focus:outline-none cursor-pointer"
+              >
+                <option value={20}>View: 20</option>
+                <option value={50}>View: 50</option>
+                <option value={100}>View: 100</option>
+              </select>
+              <Filter size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-d pointer-events-none" />
+            </div>
+          </div>
+
+          {/* Pagination */}
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={() => setCurrentPage(1)}
+              className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold ${currentPage === 1 ? 'bg-text-p text-inner' : 'text-text-s hover:bg-inner2'}`}
+            >
+              1
+            </button>
+            <button 
+              onClick={() => setCurrentPage(2)}
+              className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold ${currentPage === 2 ? 'bg-text-p text-inner' : 'text-text-s hover:bg-inner2'}`}
+            >
+              2
+            </button>
+            <span className="text-text-d px-1">...</span>
+            <button className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold text-text-s hover:bg-inner2">
+              161
+            </button>
+            <button className="w-8 h-8 rounded-lg flex items-center justify-center text-text-s hover:bg-inner2">
+              <ArrowRight size={16} />
             </button>
           </div>
-          
-          <div className="flex items-center gap-2 mb-3">
-            <input
-              type="checkbox"
-              id="autoFilter"
-              checked={autoFilter}
-              onChange={(e) => setAutoFilter(e.target.checked)}
-              className="rounded border-border"
-            />
-            <label htmlFor="autoFilter" className="text-sm text-text-s">
-              Auto-filter: Minecraft {mcVersion} + {loader}
-            </label>
-          </div>
-          
-          <div className="flex flex-wrap gap-2">
-            {categories.map(cat => (
-              <button
-                key={cat}
-                onClick={() => toggleCategory(cat)}
-                className={`px-2 py-1 text-xs rounded-full border cursor-pointer ${
-                  selectedCategories.includes(cat)
-                    ? 'bg-text-p text-inner border-text-p'
-                    : 'border-border text-text-s'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
         </div>
-      )}
+
+        {/* Version Tags */}
+        <div className="flex items-center gap-2">
+          <span className="px-3 py-1.5 bg-inner2 border border-border rounded-lg text-xs text-text-s flex items-center gap-1.5">
+            <Package size={12} /> {mcVersion}
+          </span>
+          <span className="px-3 py-1.5 bg-inner2 border border-border rounded-lg text-xs text-text-s capitalize flex items-center gap-1.5">
+            <Package size={12} /> {loader}
+          </span>
+        </div>
+      </div>
 
       {/* Mods list */}
       <div className="flex-1 overflow-hidden relative">

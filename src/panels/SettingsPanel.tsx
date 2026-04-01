@@ -107,7 +107,7 @@ export const SettingsPanel: React.FC = () => {
       </section>
 
       <div className="mt-8 pt-8 border-t border-border flex items-center justify-between opacity-30 text-[10px] text-text-s uppercase tracking-widest font-bold">
-        <span>Argon Launcher v0.1.0</span>
+        <span>Spring Launcher v0.1.0</span>
         <span>Tauri 2.0.0-rc</span>
       </div>
     </div>

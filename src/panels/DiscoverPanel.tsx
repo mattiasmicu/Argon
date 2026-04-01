@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { useLauncherStore } from '../store/useLauncherStore';
 import { Download, Heart, ExternalLink, Search, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -31,12 +30,11 @@ interface Mod {
 type ContentType = 'modpacks' | 'mods' | 'resource_packs' | 'data_packs' | 'shaders' | 'servers';
 
 export const DiscoverPanel: React.FC = () => {
-  const { pushPanel } = useLauncherStore();
   const [modpacks, setModpacks] = useState<Modpack[]>([]);
   const [mods, setMods] = useState<Mod[]>([]);
   const [activeTab, setActiveTab] = useState<ContentType>('modpacks');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState('Relevance');
+  const [sortBy] = useState('Relevance');
 
   useEffect(() => {
     fetchContent();

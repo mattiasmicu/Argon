@@ -5,10 +5,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
-            commands::auth::start_device_auth,
-            commands::auth::poll_device_auth,
-            commands::auth::open_link_window,
-            commands::auth::close_link_window,
+            commands::auth::start_microsoft_auth,
+            commands::auth::cancel_microsoft_auth,
             commands::auth::refresh_token,
             commands::auth::logout,
             commands::auth::try_official_launcher_auth,
@@ -21,6 +19,9 @@ pub fn run() {
             commands::instances::delete_instance,
             commands::instances::duplicate_instance,
             commands::instances::update_instance,
+            commands::instances::upload_instance_icon,
+            commands::instances_extra::get_instance_settings,
+            commands::instances_extra::save_instance_settings,
             commands::download::fetch_version_manifest,
             commands::download::download_version,
             commands::download::get_java_version_requirement,
@@ -32,8 +33,11 @@ pub fn run() {
             commands::files::open_in_finder,
             commands::files::create_folder,
             commands::files::delete_file,
+            commands::files::read_file_content,
             commands::files::install_mod,
             commands::files::uninstall_mod,
+            commands::files::list_installed_mods,
+            commands::files::toggle_mod,
             commands::loaders::get_loader_versions,
             commands::loaders::install_loader,
         ])

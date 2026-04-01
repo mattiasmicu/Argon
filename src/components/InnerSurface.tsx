@@ -1,13 +1,14 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useLauncherStore } from '../store/useLauncherStore';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { HomePanel } from '../panels/HomePanel';
 import { DiscoverPanel } from '../panels/DiscoverPanel';
 import { InstanceDetailPanel } from '../panels/InstanceDetailPanel';
 import { ModsPanel } from '../panels/ModsPanel';
 import { SkinsPanel } from '../panels/SkinsPanel';
 import { SettingsPanel } from '../panels/SettingsPanel';
-import { SetupWizard } from '../panels/SetupWizard';
+import { AuthScreen } from '../panels/AuthScreen';
 
 // Simple Library component showing all instances
 const LibraryPanel: React.FC = () => {
@@ -22,15 +23,23 @@ const LibraryPanel: React.FC = () => {
             onClick={() => pushPanel('instanceDetail', { id: instance.id })}
             className="p-4 bg-inner2 border border-border rounded-xl hover:border-text-s transition-colors text-left"
           >
-            <div className="w-12 h-12 bg-inner3 rounded-lg flex items-center justify-center text-2xl mb-3">
-              {instance.icon ? (
-                instance.icon.startsWith('data:') ? (
-                  <img src={instance.icon} alt="" className="w-full h-full object-cover rounded-lg" />
-                ) : (
-                  <span>{instance.icon}</span>
-                )
+            <div className="w-12 h-12 bg-inner3 rounded-lg flex items-center justify-center text-2xl mb-3 overflow-hidden">
+              {instance.icon && instance.icon.startsWith('/') ? (
+                <motion.img 
+                  src={convertFileSrc(instance.icon)} 
+                  alt="" 
+                  className="w-full h-full object-cover rounded-lg"
+                  whileHover={{ scale: 1.05 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
               ) : (
-                <span>{instance.name.charAt(0).toUpperCase()}</span>
+                <motion.span
+                  whileHover={{ scale: 1.1 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                >
+                  {instance.name.charAt(0).toUpperCase()}
+                </motion.span>
               )}
             </div>
             <p className="font-bold text-text-p">{instance.name}</p>
@@ -59,7 +68,7 @@ export const InnerSurface: React.FC = () => {
 
   return (
     <div className="bg-inner rounded-tl-inner rounded-bl-inner overflow-hidden relative border-l border-t border-border/20">
-      {!auth && <SetupWizard />}
+      {!auth && <AuthScreen isFullScreen />}
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.div
           key={currentPanel.id + (currentPanel.props?.id || '')}
