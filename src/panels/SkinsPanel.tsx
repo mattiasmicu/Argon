@@ -83,10 +83,12 @@ export const SkinsPanel: React.FC = () => {
               <img 
                 src={auth.skin} 
                 alt="Current skin" 
-                className="w-[800%] h-[800%] object-cover object-top"
+                className="w-[64px] h-[64px] object-none"
                 style={{ 
-                  objectPosition: 'top',
-                  imageRendering: 'pixelated'
+                  objectPosition: '-8px -8px',
+                  imageRendering: 'pixelated',
+                  transform: 'scale(3)',
+                  transformOrigin: 'top left'
                 }}
               />
             ) : (
