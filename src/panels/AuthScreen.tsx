@@ -19,6 +19,9 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
   const [loginError, setLoginError] = useState<string | null>(null);
   const [authWindowClosed, setAuthWindowClosed] = useState(false);
 
+  const [javaError, setJavaError] = useState<string | null>(null);
+  const [finishError, setFinishError] = useState<string | null>(null);
+
   const [showOffline, setShowOffline] = useState(false);
   const [offlineUsername, setOfflineUsername] = useState('');
 
@@ -104,19 +107,28 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
 
   const handleJava = async () => {
     setIsDownloading(true);
+    setJavaError(null);
     try {
-      const path = await invoke('download_java', { os: 'macos', arch: 'x64' });
+      // Detect OS and arch
+      const platform = await invoke<{os: string, arch: string}>('get_platform_info');
+      const path = await invoke('download_java', { os: platform.os, arch: platform.arch });
       saveSettings({ javaPath: path as string });
       setStep(3);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setJavaError(typeof err === 'string' ? err : 'Failed to download Java. You can skip and configure manually later.');
     }
     setIsDownloading(false);
   };
 
   const handleFinish = async () => {
-    const inst = await invoke('create_instance', { name: 'My First World', version: '1.20.1', loader: 'vanilla' });
-    setInstances([inst as any]);
+    setFinishError(null);
+    try {
+      const inst = await invoke('create_instance', { name: 'My First World', version: '1.20.1', loader: 'vanilla' });
+      setInstances([inst as any]);
+    } catch (err: any) {
+      setFinishError(typeof err === 'string' ? err : 'Failed to create instance');
+    }
   };
 
   // FULL SCREEN MODE
@@ -198,6 +210,11 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
                 </div>
                 <h1 className="text-3xl font-bold mb-3 text-center">Setting up Java</h1>
                 <p className="text-text-s text-center mb-8">Minecraft requires Java 21 to run.</p>
+                {javaError && (
+                  <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs text-center">
+                    {javaError}
+                  </div>
+                )}
                 {isDownloading ? (
                   <div className="space-y-4">
                     <div className="flex justify-between text-xs text-text-s px-1">
@@ -209,7 +226,10 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
                     </div>
                   </div>
                 ) : (
-                  <Button onClick={handleJava} className="w-full"><Download size={16} className="mr-2" /> Download Java 21</Button>
+                  <div className="space-y-3">
+                    <Button onClick={handleJava} className="w-full"><Download size={16} className="mr-2" /> Download Java 21</Button>
+                    <Button onClick={() => setStep(3)} variant="ghost" className="w-full text-xs">Skip for now</Button>
+                  </div>
                 )}
               </motion.div>
             )}
@@ -221,6 +241,11 @@ export const AuthScreen: React.FC<{ isFullScreen?: boolean; onClose?: () => void
                 </div>
                 <h1 className="text-3xl font-bold mb-3 text-center">You're all set!</h1>
                 <p className="text-text-s text-center mb-8">Ready to create your first instance.</p>
+                {finishError && (
+                  <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs text-center">
+                    {finishError}
+                  </div>
+                )}
                 <Button onClick={handleFinish} className="w-full"><Check size={16} className="mr-2" /> Create Instance & Finish</Button>
               </motion.div>
             )}
